@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trade Bot Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      // Config dat zowel lokaal als op Vercel werkt
+      window.BOT_CONFIG = {
+        SUPABASE_URL: 'https://rgkvpbbjsiiiycweafse.supabase.co',
+        SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJna3ZwYmJqc2lpaXljd2VhZnNlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1MjUxMDIsImV4cCI6MjA5NTEwMTEwMn0.QPdQC9g90YC1eNQGfYfgZR-7cLMA4mx974Whs-FV6Qs',
+        // localhost = via lokale FastAPI (chat + alles werkt). Anders = direct Supabase + Bitvavo
+        LOCAL: ['127.0.0.1','localhost'].includes(location.hostname),
+      };
+    </script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+<header class="border-b border-slate-800">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-3">
+        <div class="flex items-center gap-3 min-w-0">
+            <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-500 flex items-center justify-center font-bold text-slate-950 shrink-0">TB</div>
+            <div class="min-w-0">
+                <h1 class="text-lg sm:text-xl font-semibold">Trade Bot</h1>
+                <p id="status-line" class="text-[10px] sm:text-xs text-slate-400 truncate">laden...</p>
+            </div>
+        </div>
+        <div id="env-badge" class="px-3 py-1 text-xs rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">paper</div>
+    </div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 pb-24">
+
+    <!-- KPI strip -->
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="kpi-card">
+            <div class="kpi-label">Totale waarde</div>
+            <div id="kpi-total" class="kpi-value">—</div>
+            <div id="kpi-total-change" class="kpi-sub">vs start</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Cash</div>
+            <div id="kpi-cash" class="kpi-value">—</div>
+            <div id="kpi-cash-sub" class="kpi-sub">vrij beschikbaar</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Gerealiseerde PnL</div>
+            <div id="kpi-pnl" class="kpi-value">—</div>
+            <div id="kpi-pnl-sub" class="kpi-sub">over alle gesloten trades</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Open posities</div>
+            <div id="kpi-open" class="kpi-value">—</div>
+            <div id="kpi-open-sub" class="kpi-sub">van max 2</div>
+        </div>
+    </section>
+
+    <!-- Open posities (verschijnt alleen als er open zijn) -->
+    <section id="open-positions-section" class="panel hidden">
+        <h2 class="panel-title mb-3">Open posities <span id="open-positions-count" class="text-slate-500 ml-1"></span></h2>
+        <div id="open-positions-list" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>
+    </section>
+
+    <!-- Chart + signal feed -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="lg:col-span-2 panel">
+            <div class="flex items-center justify-between mb-3 gap-2">
+                <h2 class="panel-title">Koers + RSI</h2>
+                <div class="flex gap-2">
+                    <select id="chart-pair" class="bg-slate-800 text-sm rounded px-2 py-1 border border-slate-700">
+                        <option value="BTC/EUR">BTC/EUR</option>
+                        <option value="ETH/EUR">ETH/EUR</option>
+                    </select>
+                    <select id="chart-tf" class="bg-slate-800 text-sm rounded px-2 py-1 border border-slate-700">
+                        <option value="15m">15m</option>
+                        <option value="1h">1h</option>
+                    </select>
+                </div>
+            </div>
+            <div class="h-48 sm:h-64 md:h-72"><canvas id="priceChart"></canvas></div>
+            <div class="h-28 sm:h-36 md:h-40 mt-2"><canvas id="rsiChart"></canvas></div>
+        </div>
+
+        <div class="panel">
+            <h2 class="panel-title mb-3">Recente signalen</h2>
+            <div id="signals-list" class="space-y-2 max-h-[320px] sm:max-h-[480px] overflow-y-auto pr-1">
+                <div class="text-sm text-slate-500">laden...</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Portfolio history + trades -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="panel">
+            <h2 class="panel-title mb-3">Portfolio waarde over tijd</h2>
+            <div class="h-48 sm:h-64"><canvas id="portfolioChart"></canvas></div>
+        </div>
+        <div class="panel">
+            <h2 class="panel-title mb-3">Afgesloten trades</h2>
+            <div id="trades-list" class="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+                <div class="text-sm text-slate-500">nog geen trades</div>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<footer class="text-center text-xs text-slate-600 py-6">
+    <span id="last-refresh">auto-refresh elke 30s</span>
+</footer>
+
+<!-- Chat widget rechtsonder -->
+<div id="chat-fab" class="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-gradient-to-br from-emerald-500 to-cyan-500 shadow-lg cursor-pointer flex items-center justify-center text-slate-950 font-bold text-xl hover:scale-105 transition-transform z-50">
+    💬
+</div>
+
+<div id="chat-panel" class="hidden fixed bottom-24 right-4 sm:right-6 w-[calc(100vw-2rem)] sm:w-96 max-w-md h-[70vh] sm:h-[480px] bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col z-50">
+    <div class="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+        <div>
+            <div class="font-semibold text-sm">Bot Assistant</div>
+            <div class="text-xs text-slate-500">Vraag iets over je bot</div>
+        </div>
+        <button id="chat-close" class="text-slate-500 hover:text-slate-200 text-xl leading-none">×</button>
+    </div>
+    <div id="chat-messages" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 text-sm">
+        <div class="text-xs text-slate-500 italic">Stel een vraag over de bot — bv. "waarom geen trade?", "wat is mijn portfolio?", "wat zou er moeten gebeuren voor een BUY?"</div>
+    </div>
+    <form id="chat-form" class="border-t border-slate-800 p-3 flex gap-2">
+        <input id="chat-input" type="text" placeholder="Vraag iets..." autocomplete="off" class="flex-1 bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" />
+        <button type="submit" id="chat-send" class="px-3 py-2 bg-emerald-500 text-slate-950 rounded font-semibold text-sm hover:bg-emerald-400 disabled:opacity-50">Stuur</button>
+    </form>
+</div>
+
+<script src="./charts.js"></script>
+<script src="./chat.js"></script>
+</body>
+</html>

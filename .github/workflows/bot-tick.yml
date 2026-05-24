@@ -1,0 +1,42 @@
+name: Trade-bot tick
+
+# Tick elke 5 minuten — past binnen GitHub Actions free tier (288 ticks/dag).
+# 1 tick draait `python -m engine.bot --once`, schrijft naar Supabase, en stopt.
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:  # ook handmatig triggerbaar via GitHub UI
+
+concurrency:
+  # Voorkom dat overlappende ticks elkaar in de weg zitten
+  group: bot-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install runtime deps (geen FastAPI/anthropic nodig voor tick-only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install ccxt pandas numpy python-dotenv supabase pydantic httpx
+
+      - name: Run één bot-tick
+        env:
+          SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY:     ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY:  ${{ secrets.SUPABASE_SERVICE_KEY }}
+          ENV:                   paper
+          EXCHANGE:              bitvavo
+          RSI_OVERSOLD:          "40"
+          RSI_OVERBOUGHT:        "60"
+          RSI_TREND_FILTER:      "55"
+        run: python -m engine.bot --once

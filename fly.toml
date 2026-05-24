@@ -1,0 +1,25 @@
+# Fly.io config voor wanneer je naar 24/7 continuous tick wilt (ipv 5-min GH Actions cron).
+# Deploy: `fly launch --no-deploy` (eerste keer, registreert app) → `fly secrets set ...` → `fly deploy`.
+
+app = "trade-bot-joep"   # pas aan bij eerste 'fly launch' indien naam bezet
+primary_region = "ams"   # Amsterdam — lage latency naar Bitvavo
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ENV = "paper"
+  EXCHANGE = "bitvavo"
+  INTERVAL = "60"
+  RSI_OVERSOLD = "40"
+  RSI_OVERBOUGHT = "60"
+  RSI_TREND_FILTER = "55"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# Geen [http_service] — bot is geen webserver, alleen background loop.
+# 1 instance volstaat; geen autoscale.
+[processes]
+  app = "python -m engine.bot --interval 60"

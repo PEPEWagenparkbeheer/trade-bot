@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.log
+.env
+.env.local
+dashboard/
+supabase/
+.git/
+.github/
+.vercel/
+.vscode/
+.idea/
+*.md
+node_modules/
