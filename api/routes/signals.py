@@ -1,10 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from api import db
 
-router = APIRouter(prefix="/api/signals", tags=["signals"])
+router = APIRouter(prefix="/api", tags=["signals"])
 
 
-@router.get("")
-def list_signals(limit: int = 50):
-    return {"signals": db.latest_signals(limit=limit)}
+@router.get("/signals")
+def list_signals(limit: int = 50, profile: str | None = Query(None)):
+    return {"signals": db.latest_signals(limit=limit, profile=profile)}

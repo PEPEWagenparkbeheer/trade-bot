@@ -40,6 +40,36 @@
     color: rgb(100 116 139);
     margin-top: 0.25rem;
 }
+.tab-btn {
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: rgb(148 163 184);
+    border: none;
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { color: rgb(226 232 240); }
+.tab-active {
+    color: rgb(16 185 129);
+    border-bottom-color: rgb(16 185 129);
+}
+
+.profile-card {
+    background: linear-gradient(135deg, rgb(15 23 42 / 0.9), rgb(15 23 42 / 0.5));
+    border: 1px solid rgb(30 41 59);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    border-top-width: 3px;
+    transition: transform 0.15s, border-color 0.15s;
+}
+.profile-card:hover {
+    transform: translateY(-2px);
+    border-color: rgb(51 65 85);
+}
+
 .signal-row {
     padding: 0.5rem 0.75rem;
     border-radius: 8px;

@@ -1,10 +1,10 @@
-"""Open posities endpoint — wat de bot momenteel aan open longs heeft staan."""
-from fastapi import APIRouter
+"""Open posities per profiel — voor Detail tab."""
+from fastapi import APIRouter, Query
 
 from api import db
 from data.fetcher import fetch_candles
 
-router = APIRouter(prefix="/api/positions", tags=["positions"])
+router = APIRouter(prefix="/api", tags=["positions"])
 
 
 def _current_price(pair: str) -> float | None:
@@ -15,9 +15,9 @@ def _current_price(pair: str) -> float | None:
         return None
 
 
-@router.get("")
-def get_open_positions():
-    raw = db.list_open_positions()
+@router.get("/positions")
+def get_open_positions(profile: str | None = Query(None)):
+    raw = db.list_open_positions(profile=profile)
     out = []
     for r in raw:
         pair = r["pair"]
@@ -30,14 +30,15 @@ def get_open_positions():
         pnl = market_value - entry_value
         pnl_pct = (current - entry) / entry
         out.append({
-            "pair": pair,
-            "entry_price": entry,
-            "size": size,
-            "stop_loss_price": stop,
-            "current_price": current,
-            "market_value": market_value,
-            "unrealised_pnl": pnl,
+            "profile":            r["profile"],
+            "pair":               pair,
+            "entry_price":        entry,
+            "size":               size,
+            "stop_loss_price":    stop,
+            "current_price":      current,
+            "market_value":       market_value,
+            "unrealised_pnl":     pnl,
             "unrealised_pnl_pct": pnl_pct,
-            "opened_at": r["opened_at"],
+            "opened_at":          r["opened_at"],
         })
     return {"positions": out}

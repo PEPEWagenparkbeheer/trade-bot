@@ -1,62 +1,85 @@
-// Trade Bot Dashboard — vanilla JS, geen build step.
-// Werkt lokaal (via FastAPI) én op Vercel (direct naar Supabase + Bitvavo).
+// Trade Bot Dashboard — multi-profile, dual mode (lokaal/Vercel).
 
 const REFRESH_MS = 30_000;
+const PAPER_START = 1000;
+
 const fmtEur = n => '€' + Number(n).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtPct = n => (n >= 0 ? '+' : '') + (n * 100).toFixed(2) + '%';
 const fmtPnL = n => (n >= 0 ? '+' : '') + fmtEur(n);
 const pnlClass = n => n >= 0 ? 'pnl-pos' : 'pnl-neg';
 
-let priceChart, rsiChart, portfolioChart;
-let paperCapital = 1000;
-
-// Supabase client voor remote (Vercel) mode
 const sb = window.supabase
     ? window.supabase.createClient(window.BOT_CONFIG.SUPABASE_URL, window.BOT_CONFIG.SUPABASE_ANON_KEY)
     : null;
 const LOCAL = window.BOT_CONFIG?.LOCAL ?? true;
 
-// --- API-laag: routeer per omgeving ---
+// Profielen worden uit /api/status geladen (single source of truth)
+let PROFILES = [];           // [{key,label,color,...}]
+let currentProfileKey = 'gemiddeld';
+let activeTab = 'vergelijking';
+
+// Chart instances
+let priceChart, rsiChart, portfolioChart, compareChart;
+
+// --- API layer ---
 async function api(path, params = {}) {
     if (LOCAL) {
         const url = new URL('/api' + path, location.origin);
-        Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
+        Object.entries(params).forEach(([k, v]) => v !== undefined && v !== null && url.searchParams.set(k, v));
         return fetch(url).then(r => r.json());
     }
-    // remote: rechtstreeks naar Supabase/Bitvavo
     return remoteApi(path, params);
 }
 
 async function remoteApi(path, params) {
     if (path === '/status') {
+        // Hardcoded fallback (matches profiles.py — moet sync blijven)
         return {
             env: 'paper', exchange: 'bitvavo',
-            pairs: ['BTC/EUR','ETH/EUR'],
-            rsi_period: 14, rsi_oversold: 30, rsi_overbought: 70,
-            risk_per_trade: 0.02, stop_loss_pct: 0.03, paper_capital: 1000,
+            pairs: ['BTC/EUR', 'ETH/EUR'],
+            rsi_period: 14, paper_capital: 1000,
+            profiles: [
+                { key: 'laag',      label: 'Laag',      color: '#22c55e', rsi_oversold: 25, rsi_overbought: 75, trend_filter: 50,  max_positions: 1, risk_per_trade: 0.01, stop_loss_pct: 0.02 },
+                { key: 'gemiddeld', label: 'Gemiddeld', color: '#3b82f6', rsi_oversold: 30, rsi_overbought: 70, trend_filter: 55,  max_positions: 2, risk_per_trade: 0.02, stop_loss_pct: 0.03 },
+                { key: 'hoog',      label: 'Hoog',      color: '#f59e0b', rsi_oversold: 35, rsi_overbought: 65, trend_filter: 60,  max_positions: 3, risk_per_trade: 0.03, stop_loss_pct: 0.04 },
+                { key: 'extreem',   label: 'Extreem',   color: '#ef4444', rsi_oversold: 40, rsi_overbought: 60, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05 },
+            ],
         };
     }
     if (path === '/portfolio') {
-        const { data: history } = await sb.from('bot_portfolio').select('*').order('snapshot_at', { ascending: false }).limit(200);
-        const { data: trades } = await sb.from('bot_trades').select('pnl');
+        const profile = params.profile;
+        const { data: history } = await sb.from('bot_portfolio').select('*').eq('profile', profile).order('snapshot_at', { ascending: false }).limit(200);
+        const { data: trades } = await sb.from('bot_trades').select('pnl').eq('profile', profile);
         const realised = (trades || []).reduce((s, t) => s + Number(t.pnl), 0);
         const latest = history?.[0] ? { ...history[0], realised_pnl: realised } : null;
-        return { latest, history: history || [], realised_pnl: realised };
+        return { profile, latest, history: history || [], realised_pnl: realised };
+    }
+    if (path === '/portfolios') {
+        const out = [];
+        for (const p of PROFILES) {
+            const { data: history } = await sb.from('bot_portfolio').select('*').eq('profile', p.key).order('snapshot_at', { ascending: false }).limit(200);
+            const { data: trades } = await sb.from('bot_trades').select('pnl').eq('profile', p.key);
+            const realised = (trades || []).reduce((s, t) => s + Number(t.pnl), 0);
+            const wins = (trades || []).filter(t => Number(t.pnl) > 0).length;
+            const latest = history?.[0] ? { ...history[0], realised_pnl: realised } : null;
+            out.push({ ...p, latest, history: history || [], trades: (trades || []).length, wins, winrate: (trades || []).length ? wins / trades.length : 0 });
+        }
+        return { profiles: out };
     }
     if (path === '/positions') {
-        const { data: opens } = await sb.from('bot_open_positions').select('*');
+        const profile = params.profile;
+        const q = sb.from('bot_open_positions').select('*');
+        const { data: opens } = await (profile ? q.eq('profile', profile) : q);
         const positions = await Promise.all((opens || []).map(async o => {
             const market = o.pair.replace('/', '-');
             let current = Number(o.entry_price);
             try {
                 const r = await fetch(`https://api.bitvavo.com/v2/ticker/price?market=${market}`);
-                const j = await r.json();
-                current = Number(j.price);
+                current = Number((await r.json()).price);
             } catch (e) {}
-            const entry = Number(o.entry_price);
-            const size = Number(o.size);
+            const entry = Number(o.entry_price), size = Number(o.size);
             return {
-                pair: o.pair, entry_price: entry, size, stop_loss_price: Number(o.stop_loss_price),
+                profile: o.profile, pair: o.pair, entry_price: entry, size, stop_loss_price: Number(o.stop_loss_price),
                 current_price: current, market_value: size * current,
                 unrealised_pnl: size * (current - entry),
                 unrealised_pnl_pct: (current - entry) / entry,
@@ -66,18 +89,19 @@ async function remoteApi(path, params) {
         return { positions };
     }
     if (path === '/signals') {
-        const { data } = await sb.from('bot_signals').select('*').order('created_at', { ascending: false }).limit(params.limit || 50);
+        const q = sb.from('bot_signals').select('*').order('created_at', { ascending: false }).limit(params.limit || 50);
+        const { data } = await (params.profile ? q.eq('profile', params.profile) : q);
         return { signals: data || [] };
     }
     if (path === '/trades') {
-        const { data } = await sb.from('bot_trades').select('*').order('closed_at', { ascending: false }).limit(params.limit || 50);
+        const q = sb.from('bot_trades').select('*').order('closed_at', { ascending: false }).limit(params.limit || 50);
+        const { data } = await (params.profile ? q.eq('profile', params.profile) : q);
         return { trades: data || [] };
     }
     if (path === '/candles') {
         const market = params.pair.replace('/', '-');
         const r = await fetch(`https://api.bitvavo.com/v2/${market}/candles?interval=${params.timeframe}&limit=${params.limit || 100}`);
         const raw = await r.json();
-        // Bitvavo: [timestamp, open, high, low, close, volume], nieuwste eerst — wij willen oudste eerst
         const candles = raw.slice().reverse().map(c => ({
             timestamp: new Date(Number(c[0])).toISOString(),
             open: Number(c[1]), high: Number(c[2]), low: Number(c[3]), close: Number(c[4]), volume: Number(c[5]),
@@ -90,98 +114,274 @@ async function remoteApi(path, params) {
 // --- Init ---
 async function init() {
     await loadStatus();
+    setupTabs();
+    setupProfileSelector();
+    setupChartControls();
     await refreshAll();
     setInterval(refreshAll, REFRESH_MS);
-
-    document.getElementById('chart-pair').addEventListener('change', refreshChart);
-    document.getElementById('chart-tf').addEventListener('change', refreshChart);
 }
 
 async function loadStatus() {
     const r = await api('/status');
-    paperCapital = r.paper_capital;
+    PROFILES = r.profiles;
     document.getElementById('status-line').textContent =
-        `${r.exchange} · ${r.pairs.join(' / ')} · RSI ${r.rsi_period} (${r.rsi_oversold}/${r.rsi_overbought}) · risk ${(r.risk_per_trade*100).toFixed(0)}% · SL ${(r.stop_loss_pct*100).toFixed(0)}%`;
+        `${r.exchange} · ${r.pairs.join(' / ')} · 4 profielen parallel · €${r.paper_capital} startkapitaal/profiel`;
     document.getElementById('env-badge').textContent = r.env;
 }
 
+function setupTabs() {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            activeTab = btn.dataset.tab;
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('tab-active', b === btn));
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                pane.classList.toggle('hidden', pane.id !== 'tab-' + activeTab);
+            });
+            refreshAll();
+        });
+    });
+}
+
+function setupProfileSelector() {
+    const sel = document.getElementById('profile-select');
+    sel.innerHTML = PROFILES.map(p => `<option value="${p.key}">${p.label}</option>`).join('');
+    sel.value = currentProfileKey;
+    sel.addEventListener('change', () => {
+        currentProfileKey = sel.value;
+        updateProfileParams();
+        refreshDetailTab();
+    });
+    updateProfileParams();
+}
+
+function updateProfileParams() {
+    const p = PROFILES.find(x => x.key === currentProfileKey);
+    if (!p) return;
+    const tf = p.trend_filter === null ? 'geen' : `<${p.trend_filter}`;
+    document.getElementById('profile-params').textContent =
+        `BUY<${p.rsi_oversold} (tf ${tf}) · SELL>${p.rsi_overbought} · max ${p.max_positions} pos · risk ${(p.risk_per_trade * 100).toFixed(0)}% · SL ${(p.stop_loss_pct * 100).toFixed(0)}%`;
+    document.getElementById('kpi-open-max').textContent = p.max_positions;
+}
+
+function setupChartControls() {
+    document.getElementById('chart-pair').addEventListener('change', refreshChart);
+    document.getElementById('chart-tf').addEventListener('change', refreshChart);
+}
+
 async function refreshAll() {
-    await Promise.all([
-        refreshPortfolio(),
-        refreshOpenPositions(),
-        refreshSignals(),
-        refreshTrades(),
-        refreshChart(),
-    ]);
+    if (activeTab === 'vergelijking') {
+        await refreshCompareTab();
+    } else {
+        await refreshDetailTab();
+    }
     document.getElementById('last-refresh').textContent =
         `laatste refresh ${new Date().toLocaleTimeString('nl-NL')} · auto elke 30s`;
 }
 
-// --- Portfolio ---
-async function refreshPortfolio() {
-    const { latest, history } = await api('/portfolio');
-    if (!latest) return;
+// ============= VERGELIJKING TAB =============
 
+async function refreshCompareTab() {
+    const { profiles } = await api('/portfolios');
+    drawCompareCards(profiles);
+    drawCompareChart(profiles);
+    await Promise.all([refreshCompareSignals(), refreshCompareTrades()]);
+}
+
+function drawCompareCards(profiles) {
+    profiles.forEach(p => {
+        const card = document.querySelector(`[data-profile-card="${p.key}"]`);
+        if (!card) return;
+        const total = p.latest ? Number(p.latest.total_value) : PAPER_START;
+        const realised = Number(p.latest?.realised_pnl ?? 0);
+        const change = (total - PAPER_START) / PAPER_START;
+        const tf = p.trend_filter === null ? 'geen' : `<${p.trend_filter}`;
+        card.style.borderTopColor = p.color;
+        card.innerHTML = `
+            <div class="flex items-center justify-between mb-2">
+                <div class="font-semibold text-lg" style="color:${p.color}">${p.label}</div>
+                <div class="text-[10px] text-slate-500">RSI ${p.rsi_oversold}/${p.rsi_overbought}</div>
+            </div>
+            <div class="text-2xl font-semibold ${pnlClass(change)}">${fmtEur(total)}</div>
+            <div class="text-xs ${pnlClass(change)} mb-3">${fmtPct(change)} vs €1.000 start</div>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+                <div><div class="text-slate-500">Realised PnL</div><div class="${pnlClass(realised)} font-medium">${fmtPnL(realised)}</div></div>
+                <div><div class="text-slate-500">Trades</div><div class="text-slate-200 font-medium">${p.trades}</div></div>
+                <div><div class="text-slate-500">Winrate</div><div class="text-slate-200 font-medium">${p.trades ? (p.winrate * 100).toFixed(0) + '%' : '—'}</div></div>
+                <div><div class="text-slate-500">Open</div><div class="text-slate-200 font-medium">${p.latest?.open_positions ?? 0}/${p.max_positions}</div></div>
+            </div>
+            <div class="mt-3 pt-3 border-t border-slate-800 text-[10px] text-slate-500">
+                risk ${(p.risk_per_trade * 100).toFixed(0)}% · stop ${(p.stop_loss_pct * 100).toFixed(0)}% · trendfilter ${tf}
+            </div>
+        `;
+    });
+}
+
+function drawCompareChart(profiles) {
+    // Bouw tijdas: pak union van alle snapshot tijden, sorteer.
+    const datasets = profiles.map(p => {
+        const ordered = [...p.history].reverse();
+        return {
+            label: p.label,
+            data: ordered.map(h => ({ x: new Date(h.snapshot_at), y: Number(h.total_value) })),
+            borderColor: p.color,
+            backgroundColor: p.color + '20',
+            tension: 0.25,
+            pointRadius: 0,
+            borderWidth: 2,
+        };
+    });
+    if (compareChart) {
+        compareChart.data.datasets = datasets;
+        compareChart.update('none');
+        return;
+    }
+    compareChart = new Chart(document.getElementById('compareChart'), {
+        type: 'line',
+        data: { datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { labels: { color: 'rgb(148 163 184)' } },
+                tooltip: {
+                    callbacks: { label: ctx => `${ctx.dataset.label}: €${Number(ctx.parsed.y).toLocaleString('nl-NL', { minimumFractionDigits: 2 })}` },
+                },
+            },
+            scales: {
+                x: { type: 'time', time: { unit: 'hour' }, ticks: { color: 'rgb(100 116 139)' }, grid: { color: 'rgb(30 41 59 / 0.5)' } },
+                y: { ticks: { color: 'rgb(100 116 139)', callback: v => '€' + v }, grid: { color: 'rgb(30 41 59 / 0.5)' } },
+            },
+        },
+    });
+}
+
+async function refreshCompareSignals() {
+    const { signals } = await api('/signals', { limit: 20 });
+    const list = document.getElementById('compare-signals');
+    if (!signals.length) { list.innerHTML = '<div class="text-sm text-slate-500">nog geen signalen</div>'; return; }
+    list.innerHTML = signals.map(s => signalRowHtml(s, true)).join('');
+}
+
+async function refreshCompareTrades() {
+    const { trades } = await api('/trades', { limit: 20 });
+    const list = document.getElementById('compare-trades');
+    if (!trades.length) { list.innerHTML = '<div class="text-sm text-slate-500">nog geen trades</div>'; return; }
+    list.innerHTML = trades.map(t => tradeRowHtml(t, true)).join('');
+}
+
+function profileBadge(key) {
+    const p = PROFILES.find(x => x.key === key);
+    if (!p) return '';
+    return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold" style="background:${p.color}30;color:${p.color}">${p.label.toUpperCase()}</span>`;
+}
+
+function signalRowHtml(s, showProfile = false) {
+    const klass = s.action === 'BUY' ? 'signal-buy' : s.action === 'SELL' ? 'signal-sell' : 'signal-hold';
+    const time = new Date(s.created_at).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+    return `
+        <div class="signal-row ${klass}">
+            <div class="flex justify-between items-center gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                    ${showProfile ? profileBadge(s.profile) : ''}
+                    <span class="font-semibold">${s.action}</span>
+                    <span class="text-slate-400 text-xs">${s.pair}</span>
+                </div>
+                <span class="text-xs text-slate-500 shrink-0">${time}</span>
+            </div>
+            <div class="text-xs text-slate-500 mt-1">RSI 15m=${Number(s.rsi_15m).toFixed(1)} · €${Number(s.price).toLocaleString('nl-NL')}</div>
+        </div>`;
+}
+
+function tradeRowHtml(t, showProfile = false) {
+    const pnl = Number(t.pnl);
+    const time = new Date(t.closed_at).toLocaleString('nl-NL', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    return `
+        <div class="signal-row">
+            <div class="flex justify-between items-center gap-2">
+                <div class="flex items-center gap-2 min-w-0">
+                    ${showProfile ? profileBadge(t.profile) : ''}
+                    <div class="font-semibold">${t.pair}</div>
+                </div>
+                <div class="${pnlClass(pnl)} font-semibold shrink-0">${fmtPnL(pnl)}</div>
+            </div>
+            <div class="text-xs text-slate-500 mt-1">€${Number(t.entry_price).toLocaleString('nl-NL')} → €${Number(t.exit_price).toLocaleString('nl-NL')} · ${time}</div>
+        </div>`;
+}
+
+// ============= DETAIL TAB =============
+
+async function refreshDetailTab() {
+    await Promise.all([
+        refreshDetailPortfolio(),
+        refreshDetailPositions(),
+        refreshDetailSignals(),
+        refreshDetailTrades(),
+        refreshChart(),
+    ]);
+}
+
+async function refreshDetailPortfolio() {
+    const r = await api('/portfolio', { profile: currentProfileKey });
+    const latest = r.latest;
+    if (!latest) {
+        document.getElementById('kpi-total').textContent = fmtEur(PAPER_START);
+        document.getElementById('kpi-cash').textContent = fmtEur(PAPER_START);
+        document.getElementById('kpi-pnl').textContent = fmtPnL(0);
+        document.getElementById('kpi-open').textContent = '0';
+        return;
+    }
     document.getElementById('kpi-total').textContent = fmtEur(latest.total_value);
     document.getElementById('kpi-cash').textContent  = fmtEur(latest.capital);
     document.getElementById('kpi-pnl').textContent   = fmtPnL(latest.realised_pnl);
     document.getElementById('kpi-pnl').className     = 'kpi-value ' + pnlClass(latest.realised_pnl);
     document.getElementById('kpi-open').textContent  = latest.open_positions;
 
-    const change = (latest.total_value - paperCapital) / paperCapital;
+    const change = (latest.total_value - PAPER_START) / PAPER_START;
     const sub = document.getElementById('kpi-total-change');
-    sub.textContent = `${fmtPct(change)} vs ${fmtEur(paperCapital)} start`;
+    sub.textContent = `${fmtPct(change)} vs €${PAPER_START} start`;
     sub.className = 'kpi-sub ' + pnlClass(change);
 
-    drawPortfolioChart(history);
+    drawDetailPortfolioChart(r.history);
 }
 
-function drawPortfolioChart(history) {
+function drawDetailPortfolioChart(history) {
+    const p = PROFILES.find(x => x.key === currentProfileKey);
+    const color = p?.color || '#22c55e';
     const ordered = [...history].reverse();
     const labels = ordered.map(h => new Date(h.snapshot_at).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }));
     const values = ordered.map(h => Number(h.total_value));
-
+    const ds = {
+        label: 'Total value', data: values,
+        borderColor: color, backgroundColor: color + '20',
+        fill: true, tension: 0.25, pointRadius: 0,
+    };
     if (portfolioChart) {
         portfolioChart.data.labels = labels;
-        portfolioChart.data.datasets[0].data = values;
+        portfolioChart.data.datasets[0] = ds;
         portfolioChart.update('none');
         return;
     }
     portfolioChart = new Chart(document.getElementById('portfolioChart'), {
-        type: 'line',
-        data: {
-            labels,
-            datasets: [{
-                label: 'Total value',
-                data: values,
-                borderColor: 'rgb(52 211 153)',
-                backgroundColor: 'rgb(52 211 153 / 0.1)',
-                fill: true,
-                tension: 0.25,
-                pointRadius: 0,
-            }],
-        },
+        type: 'line', data: { labels, datasets: [ds] },
         options: chartBase('€'),
     });
 }
 
-// --- Open posities ---
-async function refreshOpenPositions() {
-    const { positions } = await api('/positions');
+async function refreshDetailPositions() {
+    const { positions } = await api('/positions', { profile: currentProfileKey });
     const section = document.getElementById('open-positions-section');
     const list = document.getElementById('open-positions-list');
     const count = document.getElementById('open-positions-count');
-    if (!positions || positions.length === 0) {
+    if (!positions || !positions.length) {
         section.classList.add('hidden');
         return;
     }
     section.classList.remove('hidden');
     count.textContent = `(${positions.length})`;
     list.innerHTML = positions.map(p => {
-        const pnl = Number(p.unrealised_pnl);
-        const pnlPct = Number(p.unrealised_pnl_pct);
+        const pnl = Number(p.unrealised_pnl), pnlPct = Number(p.unrealised_pnl_pct);
         const opened = new Date(p.opened_at).toLocaleString('nl-NL', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-        const stopDistPct = (Number(p.current_price) - Number(p.stop_loss_price)) / Number(p.current_price);
+        const stopDist = (Number(p.current_price) - Number(p.stop_loss_price)) / Number(p.current_price);
         return `
         <div class="signal-row">
             <div class="flex justify-between items-baseline">
@@ -192,61 +392,29 @@ async function refreshOpenPositions() {
                 <div>Size: <span class="text-slate-200">${Number(p.size).toFixed(6)}</span></div>
                 <div>Entry: <span class="text-slate-200">${fmtEur(p.entry_price)}</span></div>
                 <div>Nu: <span class="text-slate-200">${fmtEur(p.current_price)}</span></div>
-                <div>Stop: <span class="text-slate-200">${fmtEur(p.stop_loss_price)}</span> <span class="text-slate-600">(${(stopDistPct*100).toFixed(1)}%)</span></div>
+                <div>Stop: <span class="text-slate-200">${fmtEur(p.stop_loss_price)}</span> <span class="text-slate-600">(${(stopDist*100).toFixed(1)}%)</span></div>
             </div>
             <div class="text-[10px] text-slate-600 mt-1">geopend ${opened}</div>
         </div>`;
     }).join('');
 }
 
-// --- Signals feed ---
-async function refreshSignals() {
-    const { signals } = await api('/signals', { limit: 30 });
+async function refreshDetailSignals() {
+    const { signals } = await api('/signals', { limit: 30, profile: currentProfileKey });
     const list = document.getElementById('signals-list');
-    if (!signals.length) { list.innerHTML = '<div class="text-sm text-slate-500">nog geen signalen</div>'; return; }
-    list.innerHTML = signals.map(s => {
-        const klass = s.action === 'BUY' ? 'signal-buy' : s.action === 'SELL' ? 'signal-sell' : 'signal-hold';
-        const time = new Date(s.created_at).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
-        return `
-        <div class="signal-row ${klass}">
-            <div class="flex justify-between items-center">
-                <div>
-                    <span class="font-semibold">${s.action}</span>
-                    <span class="text-slate-400 text-xs ml-2">${s.pair}</span>
-                </div>
-                <span class="text-xs text-slate-500">${time}</span>
-            </div>
-            <div class="text-xs text-slate-500 mt-1">
-                RSI 15m=${Number(s.rsi_15m).toFixed(1)} · 1h=${Number(s.rsi_1h).toFixed(1)} · €${Number(s.price).toLocaleString('nl-NL')}
-            </div>
-            <div class="text-xs text-slate-600 mt-0.5 italic">${s.reason}</div>
-        </div>`;
-    }).join('');
+    list.innerHTML = signals.length
+        ? signals.map(s => signalRowHtml(s)).join('')
+        : '<div class="text-sm text-slate-500">nog geen signalen</div>';
 }
 
-// --- Trades ---
-async function refreshTrades() {
-    const { trades } = await api('/trades', { limit: 30 });
+async function refreshDetailTrades() {
+    const { trades } = await api('/trades', { limit: 30, profile: currentProfileKey });
     const list = document.getElementById('trades-list');
-    if (!trades.length) { list.innerHTML = '<div class="text-sm text-slate-500">nog geen afgesloten trades</div>'; return; }
-    list.innerHTML = trades.map(t => {
-        const pnl = Number(t.pnl);
-        const time = new Date(t.closed_at).toLocaleString('nl-NL', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-        return `
-        <div class="signal-row">
-            <div class="flex justify-between">
-                <div class="font-semibold">${t.pair}</div>
-                <div class="${pnlClass(pnl)} font-semibold">${fmtPnL(pnl)}</div>
-            </div>
-            <div class="text-xs text-slate-500 mt-1">
-                ${Number(t.size).toFixed(6)} @ €${Number(t.entry_price).toLocaleString('nl-NL')} → €${Number(t.exit_price).toLocaleString('nl-NL')}
-            </div>
-            <div class="text-xs text-slate-600 mt-0.5">${t.reason} · ${time}</div>
-        </div>`;
-    }).join('');
+    list.innerHTML = trades.length
+        ? trades.map(t => tradeRowHtml(t)).join('')
+        : '<div class="text-sm text-slate-500">nog geen afgesloten trades</div>';
 }
 
-// --- Price + RSI chart ---
 async function refreshChart() {
     const pair = document.getElementById('chart-pair').value;
     const tf = document.getElementById('chart-tf').value;
@@ -256,7 +424,6 @@ async function refreshChart() {
     const closes = data.candles.map(c => c.close);
     const rsi = computeRSI(closes, 14);
 
-    // Price chart
     if (priceChart) {
         priceChart.data.labels = labels;
         priceChart.data.datasets[0].data = closes;
@@ -264,23 +431,10 @@ async function refreshChart() {
     } else {
         priceChart = new Chart(document.getElementById('priceChart'), {
             type: 'line',
-            data: {
-                labels,
-                datasets: [{
-                    label: `${pair} close`,
-                    data: closes,
-                    borderColor: 'rgb(56 189 248)',
-                    backgroundColor: 'rgb(56 189 248 / 0.1)',
-                    fill: true,
-                    tension: 0.25,
-                    pointRadius: 0,
-                }],
-            },
+            data: { labels, datasets: [{ label: `${pair} close`, data: closes, borderColor: 'rgb(56 189 248)', backgroundColor: 'rgb(56 189 248 / 0.1)', fill: true, tension: 0.25, pointRadius: 0 }] },
             options: chartBase('€'),
         });
     }
-
-    // RSI chart
     if (rsiChart) {
         rsiChart.data.labels = labels;
         rsiChart.data.datasets[0].data = rsi;
@@ -288,52 +442,25 @@ async function refreshChart() {
     } else {
         rsiChart = new Chart(document.getElementById('rsiChart'), {
             type: 'line',
-            data: {
-                labels,
-                datasets: [{
-                    label: 'RSI(14)',
-                    data: rsi,
-                    borderColor: 'rgb(251 191 36)',
-                    backgroundColor: 'rgb(251 191 36 / 0.1)',
-                    fill: false,
-                    tension: 0.25,
-                    pointRadius: 0,
-                }],
-            },
-            options: {
-                ...chartBase(''),
-                scales: {
-                    ...chartBase('').scales,
-                    y: {
-                        min: 0, max: 100,
-                        ticks: { color: 'rgb(100 116 139)' },
-                        grid: { color: 'rgb(30 41 59 / 0.5)' },
-                    },
-                },
-                plugins: {
-                    ...chartBase('').plugins,
-                    annotation: undefined,
-                },
-            },
+            data: { labels, datasets: [{ label: 'RSI(14)', data: rsi, borderColor: 'rgb(251 191 36)', backgroundColor: 'rgb(251 191 36 / 0.1)', tension: 0.25, pointRadius: 0 }] },
+            options: { ...chartBase(''), scales: { ...chartBase('').scales, y: { min: 0, max: 100, ticks: { color: 'rgb(100 116 139)' }, grid: { color: 'rgb(30 41 59 / 0.5)' } } } },
         });
     }
 }
 
-// Wilder RSI (zelfde formule als backend) — voor live chart overlay
 function computeRSI(closes, period = 14) {
     if (closes.length < period + 1) return closes.map(() => null);
     const out = new Array(closes.length).fill(null);
     const alpha = 1 / period;
     let avgGain = 0, avgLoss = 0;
     for (let i = 1; i <= period; i++) {
-        const d = closes[i] - closes[i-1];
-        avgGain += Math.max(d, 0);
-        avgLoss += Math.max(-d, 0);
+        const d = closes[i] - closes[i - 1];
+        avgGain += Math.max(d, 0); avgLoss += Math.max(-d, 0);
     }
     avgGain /= period; avgLoss /= period;
     out[period] = 100 - 100 / (1 + (avgGain / (avgLoss || 1e-10)));
     for (let i = period + 1; i < closes.length; i++) {
-        const d = closes[i] - closes[i-1];
+        const d = closes[i] - closes[i - 1];
         const g = Math.max(d, 0), l = Math.max(-d, 0);
         avgGain = (1 - alpha) * avgGain + alpha * g;
         avgLoss = (1 - alpha) * avgLoss + alpha * l;
@@ -344,14 +471,11 @@ function computeRSI(closes, period = 14) {
 
 function chartBase(prefix) {
     return {
-        responsive: true,
-        maintainAspectRatio: false,
+        responsive: true, maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
         plugins: {
             legend: { labels: { color: 'rgb(148 163 184)' } },
-            tooltip: { callbacks: {
-                label: ctx => `${ctx.dataset.label}: ${prefix}${Number(ctx.parsed.y).toLocaleString('nl-NL', { maximumFractionDigits: 2 })}`,
-            }},
+            tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${prefix}${Number(ctx.parsed.y).toLocaleString('nl-NL', { maximumFractionDigits: 2 })}` } },
         },
         scales: {
             x: { ticks: { color: 'rgb(100 116 139)', maxRotation: 0, autoSkipPadding: 20 }, grid: { color: 'rgb(30 41 59 / 0.5)' } },
@@ -360,4 +484,10 @@ function chartBase(prefix) {
     };
 }
 
-init();
+// Chart.js needs date adapter for type:'time'. Inline import via CDN.
+(function loadDateAdapter() {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js';
+    s.onload = () => init();
+    document.head.appendChild(s);
+})();

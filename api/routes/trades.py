@@ -1,10 +1,10 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from api import db
 
-router = APIRouter(prefix="/api/trades", tags=["trades"])
+router = APIRouter(prefix="/api", tags=["trades"])
 
 
-@router.get("")
-def list_trades(limit: int = 50):
-    return {"trades": db.latest_trades(limit=limit)}
+@router.get("/trades")
+def list_trades(limit: int = 50, profile: str | None = Query(None)):
+    return {"trades": db.latest_trades(limit=limit, profile=profile)}

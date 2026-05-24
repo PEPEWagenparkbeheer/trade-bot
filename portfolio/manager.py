@@ -1,18 +1,16 @@
 """
-PortfolioManager = in-memory boekhouding van capital + open posities.
+PortfolioManager — boekhouding van capital + open posities voor één profiel.
 
-Eén instantie per bot-proces. Persistence (Supabase) komt in fase 6 — voor
-nu houdt deze klasse alles in geheugen, zodat strategie + engine eerst goed
-testbaar zijn zonder database.
+Eén instantie per (profile × bot-proces). Risk en stop-loss komen uit het
+gekoppelde Profile object i.p.v. uit globale config.
 
 Position sizing volgt de risk-based formule:
-    risk_eur     = capital * RISK_PER_TRADE        (bv. 2%)
-    stop_pct     = STOP_LOSS_PCT                   (bv. 3%)
-    position_eur = risk_eur / stop_pct             (= capital * 0.667 bij 2%/3%)
+    risk_eur     = capital * profile.risk_per_trade
+    position_eur = risk_eur / profile.stop_loss_pct
 
-Dat betekent: per trade riskeren we 2% van het kapitaal, niet 2% positie.
-Een 3% stop loss op die positie = 2% verlies op het hele portfolio. Klassiek
-"risk first" position sizing.
+Bij profile.max_positions worden nieuwe opens geweigerd zodra de cap
+bereikt is — zo verschilt Laag (cap 1) van de rest (cap 2-4) ondanks dat
+we nu 2 pairs hebben.
 """
 from __future__ import annotations
 
@@ -20,13 +18,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-import config
 from portfolio.position import Position
+from profiles import Profile
+
+PAPER_CAPITAL_DEFAULT = 1000.0
 
 
 @dataclass
 class ClosedTrade:
-    """Audit-record van een afgesloten trade. Vrijwel direct te dumpen in Supabase."""
     pair: str
     entry_price: float
     exit_price: float
@@ -34,12 +33,13 @@ class ClosedTrade:
     pnl: float
     opened_at: datetime
     closed_at: datetime
-    reason: str  # 'sell-signal' of 'stop-loss'
+    reason: str  # 'sell-signal' | 'stop-loss' | 'FORCE ...'
 
 
 @dataclass
 class PortfolioManager:
-    capital: float = field(default_factory=lambda: config.PAPER_CAPITAL)
+    profile: Profile
+    capital: float = PAPER_CAPITAL_DEFAULT
     open_positions: Dict[str, Position] = field(default_factory=dict)
     closed_trades: List[ClosedTrade] = field(default_factory=list)
 
@@ -51,8 +51,10 @@ class PortfolioManager:
     def get_open(self, pair: str) -> Optional[Position]:
         return self.open_positions.get(pair)
 
+    def at_max_positions(self) -> bool:
+        return len(self.open_positions) >= self.profile.max_positions
+
     def total_value(self, prices: Dict[str, float]) -> float:
-        """Cash + market value van alle open posities."""
         market = sum(
             pos.current_value(prices[pair])
             for pair, pos in self.open_positions.items()
@@ -66,34 +68,28 @@ class PortfolioManager:
     # --- mutations -----------------------------------------------------------
 
     def open_long(self, pair: str, price: float) -> Optional[Position]:
-        """
-        Open een long positie op `pair` tegen `price`.
-        Geeft None terug als er al een open positie is, of als er onvoldoende capital is.
-        """
         if self.has_open(pair):
-            return None  # we staan max 1 positie per pair toe
+            return None  # max 1 positie per pair
+        if self.at_max_positions():
+            return None  # profile cap geraakt
 
-        risk_eur = self.capital * config.RISK_PER_TRADE
-        position_eur = risk_eur / config.STOP_LOSS_PCT
+        risk_eur = self.capital * self.profile.risk_per_trade
+        position_eur = risk_eur / self.profile.stop_loss_pct
 
-        # Kunnen we dat überhaupt betalen?
         if position_eur > self.capital:
-            position_eur = self.capital  # niet meer kopen dan we hebben
+            position_eur = self.capital
         if position_eur <= 0:
             return None
 
         size = position_eur / price
-        stop_loss = price * (1 - config.STOP_LOSS_PCT)
+        stop_loss = price * (1 - self.profile.stop_loss_pct)
 
-        position = Position(
-            pair=pair, entry_price=price, size=size, stop_loss_price=stop_loss
-        )
+        position = Position(pair=pair, entry_price=price, size=size, stop_loss_price=stop_loss)
         self.open_positions[pair] = position
         self.capital -= position.entry_value
         return position
 
     def close(self, pair: str, exit_price: float, reason: str) -> Optional[ClosedTrade]:
-        """Sluit de open positie op `pair` en boek de proceeds terug naar capital."""
         position = self.open_positions.pop(pair, None)
         if position is None:
             return None

@@ -1,65 +1,76 @@
 """
-RSI-strategie volgens CLAUDE.md:
+RSI-strategie, profile-aware.
 
-  LONG  : RSI 15m < 30  EN  RSI 1h < 50
-  EXIT  : RSI 15m > 70  (of stop loss — die wordt door portfolio afgehandeld)
-  HOLD  : alles daartussen
+Per profiel komen drempels uit het Profile object:
+- BUY  als RSI_entry < profile.rsi_oversold EN (geen trend-filter OF RSI_trend < profile.trend_filter)
+- SELL als RSI_entry > profile.rsi_overbought
+- HOLD anders
 
-Deze module produceert alleen het Signal — opening/sluiting van posities
-gebeurt in de engine + portfolio.
+`evaluate()` houdt verantwoordelijkheid voor data-fetch.
+`evaluate_from_state()` accepteert vooraf-berekende marktdata zodat de bot
+één keer per tick candles ophaalt en die voor alle 4 profielen hergebruikt.
 """
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import config
 from data.fetcher import fetch_candles, to_dataframe
 from data.indicators import latest_rsi
+from profiles import Profile
 from strategy.signal import Action, Signal
 
 
-def evaluate(pair: str) -> Signal:
-    """
-    Haal de laatste candles op voor `pair`, bereken RSI op beide timeframes,
-    en zet om in een Signal. Eén call per pair per tick.
-    """
-    # 15m candles — entry timeframe
-    df_entry = to_dataframe(
-        fetch_candles(pair, config.TIMEFRAME_ENTRY, limit=200)
-    )
-    # 1h candles — trendfilter
-    df_trend = to_dataframe(
-        fetch_candles(pair, config.TIMEFRAME_TREND, limit=200)
-    )
+@dataclass(frozen=True)
+class MarketState:
+    """Snapshot van pair op tijdstip: prijs + beide RSI's. Eén keer berekend, hergebruikt over profielen."""
+    pair: str
+    price: float
+    rsi_15m: float
+    rsi_1h: float
 
+
+def compute_market_state(pair: str) -> MarketState:
+    df_entry = to_dataframe(fetch_candles(pair, config.TIMEFRAME_ENTRY, limit=200))
+    df_trend = to_dataframe(fetch_candles(pair, config.TIMEFRAME_TREND, limit=200))
     if df_entry.empty or df_trend.empty:
         raise RuntimeError(f"Geen candle-data voor {pair}")
-
-    rsi_15m = latest_rsi(df_entry["close"])
-    rsi_1h = latest_rsi(df_trend["close"])
-    price = float(df_entry["close"].iloc[-1])
-
-    action, reason = _decide(rsi_15m, rsi_1h)
-
-    return Signal(
+    return MarketState(
         pair=pair,
-        action=action,
-        price=price,
-        rsi_15m=rsi_15m,
-        rsi_1h=rsi_1h,
-        reason=reason,
+        price=float(df_entry["close"].iloc[-1]),
+        rsi_15m=latest_rsi(df_entry["close"]),
+        rsi_1h=latest_rsi(df_trend["close"]),
     )
 
 
-def _decide(rsi_15m: float, rsi_1h: float) -> tuple[Action, str]:
-    """Pure beslissingslogica — los van data-fetching, makkelijk te unit-testen."""
-    if rsi_15m < config.RSI_OVERSOLD and rsi_1h < config.RSI_TREND_FILTER:
-        return Action.BUY, f"oversold (rsi15m<{config.RSI_OVERSOLD}) + zwakke trend (rsi1h<{config.RSI_TREND_FILTER})"
-    if rsi_15m > config.RSI_OVERBOUGHT:
-        return Action.SELL, f"overbought (rsi15m>{config.RSI_OVERBOUGHT})"
-    return Action.HOLD, "geen entry- of exit-conditie"
+def evaluate_from_state(state: MarketState, profile: Profile) -> Signal:
+    action, reason = _decide(state.rsi_15m, state.rsi_1h, profile)
+    return Signal(
+        pair=state.pair, action=action,
+        price=state.price, rsi_15m=state.rsi_15m, rsi_1h=state.rsi_1h, reason=reason,
+    )
+
+
+def evaluate(pair: str, profile: Profile) -> Signal:
+    """Convenience: fetch + decide. Voor losse calls (force_trade, debugging)."""
+    return evaluate_from_state(compute_market_state(pair), profile)
+
+
+def _decide(rsi_15m: float, rsi_1h: float, profile: Profile) -> tuple[Action, str]:
+    trend_ok = profile.trend_filter is None or rsi_1h < profile.trend_filter
+    if rsi_15m < profile.rsi_oversold and trend_ok:
+        trend_part = "geen trend-filter" if profile.trend_filter is None else f"rsi1h<{profile.trend_filter}"
+        return Action.BUY, f"[{profile.label}] oversold (rsi15m<{profile.rsi_oversold}) + {trend_part}"
+    if rsi_15m > profile.rsi_overbought:
+        return Action.SELL, f"[{profile.label}] overbought (rsi15m>{profile.rsi_overbought})"
+    return Action.HOLD, f"[{profile.label}] geen entry/exit-conditie"
 
 
 if __name__ == "__main__":
-    # Smoke test: print signaal voor elke geconfigureerde pair
+    from profiles import all_profiles
     for pair in config.PAIRS:
-        signal = evaluate(pair)
-        print(signal)
+        state = compute_market_state(pair)
+        print(f"\n{pair}  price={state.price:.2f}  rsi15m={state.rsi_15m:.1f}  rsi1h={state.rsi_1h:.1f}")
+        for p in all_profiles():
+            sig = evaluate_from_state(state, p)
+            print(f"  {p.label:10s} → {sig.action.value:4s}  ({sig.reason})")
