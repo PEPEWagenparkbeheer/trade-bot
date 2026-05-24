@@ -140,6 +140,65 @@ function setupTabs() {
             refreshAll();
         });
     });
+
+    // Export-knoppen
+    document.querySelectorAll('[data-export]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const kind = btn.dataset.export;  // 'signals' | 'trades'
+            btn.disabled = true;
+            try {
+                await exportToCsv(kind);
+            } catch (e) {
+                alert('Export faalde: ' + e.message);
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    });
+}
+
+// --- CSV export ---
+async function exportToCsv(kind) {
+    const r = await api('/' + kind, { limit: 5000 });
+    const rows = r[kind] || [];
+    if (!rows.length) { alert('Geen data om te exporteren'); return; }
+
+    // Kolomvolgorde — profile eerst voor leesbaarheid in Excel
+    const columnOrder = kind === 'signals'
+        ? ['profile', 'created_at', 'pair', 'action', 'price', 'rsi_15m', 'rsi_1h', 'reason']
+        : ['profile', 'closed_at', 'opened_at', 'pair', 'entry_price', 'exit_price', 'size', 'pnl', 'reason'];
+    const headers = columnOrder.filter(c => c in rows[0]);
+
+    // Semicolon-delimited zodat Excel NL kolommen direct splitst.
+    // Decimaalkomma voor numerieke velden zodat Excel NL het als getal pakt.
+    const sep = ';';
+    const formatCell = (v) => {
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'number') return String(v).replace('.', ',');
+        const s = String(v);
+        // Quote als veld separator/quote/newline bevat
+        if (s.includes(sep) || s.includes('"') || s.includes('\n')) {
+            return '"' + s.replace(/"/g, '""') + '"';
+        }
+        return s;
+    };
+    const lines = [headers.join(sep)];
+    for (const row of rows) {
+        lines.push(headers.map(h => formatCell(row[h])).join(sep));
+    }
+    // UTF-8 BOM voor correcte weergave van EUR-tekens en accenten in Excel
+    const csv = '﻿' + lines.join('\r\n');
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `trade-bot-${kind}-${stamp}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
 }
 
 function setupProfileSelector() {
@@ -197,20 +256,20 @@ function drawCompareCards(profiles) {
         const tf = p.trend_filter === null ? 'geen' : `<${p.trend_filter}`;
         card.style.borderTopColor = p.color;
         card.innerHTML = `
-            <div class="flex items-center justify-between mb-2">
-                <div class="font-semibold text-lg" style="color:${p.color}">${p.label}</div>
-                <div class="text-[10px] text-slate-500">RSI ${p.rsi_oversold}/${p.rsi_overbought}</div>
+            <div class="flex items-center justify-between mb-1.5 sm:mb-2 gap-1">
+                <div class="font-semibold text-sm sm:text-lg truncate" style="color:${p.color}">${p.label}</div>
+                <div class="text-[9px] sm:text-[10px] text-slate-500 shrink-0">${p.rsi_oversold}/${p.rsi_overbought}</div>
             </div>
-            <div class="text-2xl font-semibold ${pnlClass(change)}">${fmtEur(total)}</div>
-            <div class="text-xs ${pnlClass(change)} mb-3">${fmtPct(change)} vs €1.000 start</div>
-            <div class="grid grid-cols-2 gap-2 text-xs">
-                <div><div class="text-slate-500">Realised PnL</div><div class="${pnlClass(realised)} font-medium">${fmtPnL(realised)}</div></div>
+            <div class="text-base sm:text-2xl font-semibold ${pnlClass(change)} leading-tight">${fmtEur(total)}</div>
+            <div class="text-[10px] sm:text-xs ${pnlClass(change)} mb-2 sm:mb-3">${fmtPct(change)}</div>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] sm:text-xs">
+                <div><div class="text-slate-500">PnL</div><div class="${pnlClass(realised)} font-medium">${fmtPnL(realised)}</div></div>
                 <div><div class="text-slate-500">Trades</div><div class="text-slate-200 font-medium">${p.trades}</div></div>
                 <div><div class="text-slate-500">Winrate</div><div class="text-slate-200 font-medium">${p.trades ? (p.winrate * 100).toFixed(0) + '%' : '—'}</div></div>
                 <div><div class="text-slate-500">Open</div><div class="text-slate-200 font-medium">${p.latest?.open_positions ?? 0}/${p.max_positions}</div></div>
             </div>
-            <div class="mt-3 pt-3 border-t border-slate-800 text-[10px] text-slate-500">
-                risk ${(p.risk_per_trade * 100).toFixed(0)}% · stop ${(p.stop_loss_pct * 100).toFixed(0)}% · trendfilter ${tf}
+            <div class="hidden sm:block mt-3 pt-3 border-t border-slate-800 text-[10px] text-slate-500">
+                risk ${(p.risk_per_trade * 100).toFixed(0)}% · stop ${(p.stop_loss_pct * 100).toFixed(0)}% · tf ${tf}
             </div>
         `;
     });

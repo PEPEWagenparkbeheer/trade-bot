@@ -40,6 +40,27 @@
     color: rgb(100 116 139);
     margin-top: 0.25rem;
 }
+.export-btn {
+    font-size: 0.75rem;
+    padding: 0.35rem 0.7rem;
+    border-radius: 6px;
+    background: rgb(30 41 59);
+    border: 1px solid rgb(51 65 85);
+    color: rgb(226 232 240);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+.export-btn:hover {
+    background: rgb(51 65 85);
+    border-color: rgb(16 185 129);
+    color: rgb(52 211 153);
+}
+.export-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+
 .tab-btn {
     padding: 0.625rem 1rem;
     font-size: 0.875rem;
@@ -60,10 +81,14 @@
 .profile-card {
     background: linear-gradient(135deg, rgb(15 23 42 / 0.9), rgb(15 23 42 / 0.5));
     border: 1px solid rgb(30 41 59);
-    border-radius: 12px;
-    padding: 1rem 1.25rem;
+    border-radius: 10px;
+    padding: 0.625rem 0.75rem;     /* compact op mobiel */
     border-top-width: 3px;
     transition: transform 0.15s, border-color 0.15s;
+    min-width: 0;                  /* sta toe dat content krimpt binnen grid-cel */
+}
+@media (min-width: 640px) {
+    .profile-card { padding: 1rem 1.25rem; border-radius: 12px; }
 }
 .profile-card:hover {
     transform: translateY(-2px);

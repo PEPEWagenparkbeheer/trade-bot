@@ -39,8 +39,8 @@
 <!-- ============ TAB: VERGELIJKING ============ -->
 <main id="tab-vergelijking" class="tab-pane max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 pb-24">
 
-    <!-- 4 profile cards -->
-    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+    <!-- 4 profile cards: altijd minimaal 2 naast elkaar (ook op smal mobiel) -->
+    <section class="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
         <div data-profile-card="laag"      class="profile-card"></div>
         <div data-profile-card="gemiddeld" class="profile-card"></div>
         <div data-profile-card="hoog"      class="profile-card"></div>
@@ -56,11 +56,17 @@
     <!-- Trades samenvatting per profiel -->
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div class="panel">
-            <h2 class="panel-title mb-3">Laatste signalen — alle profielen</h2>
+            <div class="flex items-center justify-between mb-3 gap-2">
+                <h2 class="panel-title">Laatste signalen — alle profielen</h2>
+                <button data-export="signals" class="export-btn">⬇ Excel</button>
+            </div>
             <div id="compare-signals" class="space-y-2 max-h-[360px] overflow-y-auto pr-1"></div>
         </div>
         <div class="panel">
-            <h2 class="panel-title mb-3">Laatste trades — alle profielen</h2>
+            <div class="flex items-center justify-between mb-3 gap-2">
+                <h2 class="panel-title">Laatste trades — alle profielen</h2>
+                <button data-export="trades" class="export-btn">⬇ Excel</button>
+            </div>
             <div id="compare-trades" class="space-y-2 max-h-[360px] overflow-y-auto pr-1"></div>
         </div>
     </section>
