@@ -141,7 +141,10 @@ function setupTabs() {
         });
     });
 
-    // Export-knoppen
+    // Excel-rapport knop (uit export.js)
+    setupXlsxExport();
+
+    // CSV snel-export knoppen
     document.querySelectorAll('[data-export]').forEach(btn => {
         btn.addEventListener('click', async () => {
             const kind = btn.dataset.export;  // 'signals' | 'trades'

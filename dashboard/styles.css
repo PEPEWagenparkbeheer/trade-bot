@@ -40,6 +40,27 @@
     color: rgb(100 116 139);
     margin-top: 0.25rem;
 }
+.export-btn-primary {
+    font-size: 0.875rem;
+    padding: 0.45rem 1rem;
+    border-radius: 8px;
+    background: linear-gradient(135deg, rgb(16 185 129), rgb(6 182 212));
+    border: none;
+    color: rgb(15 23 42);
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+.export-btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgb(16 185 129 / 0.3);
+}
+.export-btn-primary:disabled {
+    opacity: 0.5;
+    cursor: wait;
+    transform: none;
+}
+
 .export-btn {
     font-size: 0.75rem;
     padding: 0.35rem 0.7rem;

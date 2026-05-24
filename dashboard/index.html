@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <link rel="stylesheet" href="./styles.css" />
     <script>
       window.BOT_CONFIG = {
@@ -38,6 +39,28 @@
 
 <!-- ============ TAB: VERGELIJKING ============ -->
 <main id="tab-vergelijking" class="tab-pane max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 pb-24">
+
+    <!-- Export bar -->
+    <section class="panel">
+        <div class="flex flex-wrap items-center gap-2 sm:gap-3">
+            <div class="text-sm font-semibold text-slate-300 mr-1">📊 Analyse export</div>
+            <select id="export-period" class="bg-slate-800 text-xs sm:text-sm rounded px-2 py-1.5 border border-slate-700">
+                <option value="24h">Laatste 24 uur</option>
+                <option value="7d">Laatste 7 dagen</option>
+                <option value="30d">Laatste 30 dagen</option>
+                <option value="all" selected>Alles</option>
+            </select>
+            <select id="export-profile" class="bg-slate-800 text-xs sm:text-sm rounded px-2 py-1.5 border border-slate-700">
+                <option value="all" selected>Alle profielen</option>
+                <option value="laag">Laag</option>
+                <option value="gemiddeld">Gemiddeld</option>
+                <option value="hoog">Hoog</option>
+                <option value="extreem">Extreem</option>
+            </select>
+            <button id="export-xlsx" class="export-btn-primary">⬇ Volledig Excel rapport</button>
+            <span id="export-status" class="text-xs text-slate-500"></span>
+        </div>
+    </section>
 
     <!-- 4 profile cards: altijd minimaal 2 naast elkaar (ook op smal mobiel) -->
     <section class="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
@@ -179,6 +202,7 @@
 </div>
 
 <script src="./charts.js"></script>
+<script src="./export.js"></script>
 <script src="./chat.js"></script>
 </body>
 </html>
