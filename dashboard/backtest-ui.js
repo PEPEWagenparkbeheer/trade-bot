@@ -49,9 +49,28 @@ function setupBacktestUI() {
 // ============================================================================
 // Run backtest voor alle 4 profielen
 // ============================================================================
+// Vooraf-gedefinieerde marktcycli — handig om V2/V3 in 1 klik te testen
+const BT_PRESETS = {
+    'bullrun-2020-21': { from: '2020-10-01', to: '2021-11-01', label: '🚀 Bull run okt-2020 → nov-2021' },
+    'bear-2022':       { from: '2022-01-01', to: '2022-12-31', label: '🐻 Bear markt 2022' },
+    'sideways-2023h1': { from: '2023-01-01', to: '2023-06-30', label: '➡️ Zijwaarts/herstel H1 2023' },
+};
+
 function resolvePeriod() {
-    // Returnt { sinceMs, untilMs, label }
+    // Returnt { sinceMs, untilMs, label, days }
     const sel = document.getElementById('bt-period').value;
+
+    // Preset uit marktcycli
+    if (sel.startsWith('preset:')) {
+        const key = sel.slice('preset:'.length);
+        const p = BT_PRESETS[key];
+        if (!p) throw new Error(`Onbekende preset: ${key}`);
+        const sinceMs = new Date(p.from + 'T00:00:00Z').getTime();
+        const untilMs = new Date(p.to + 'T23:59:59Z').getTime();
+        const days = Math.round((untilMs - sinceMs) / 86400_000);
+        return { sinceMs, untilMs, label: `${p.label} (${days}d)`, days };
+    }
+
     if (sel === 'custom') {
         const from = document.getElementById('bt-date-from').value;
         const to = document.getElementById('bt-date-to').value;
@@ -62,6 +81,7 @@ function resolvePeriod() {
         const days = Math.round((untilMs - sinceMs) / 86400_000);
         return { sinceMs, untilMs, label: `${from} → ${to} (${days}d)`, days };
     }
+
     const days = Number(sel);
     return {
         sinceMs: Date.now() - days * 86400_000,

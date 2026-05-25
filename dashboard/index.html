@@ -206,16 +206,25 @@
             <div>
                 <label class="block text-xs text-slate-400 mb-1">Periode</label>
                 <select id="bt-period" class="w-full bg-slate-800 text-sm rounded px-2 py-2 border border-slate-700">
-                    <option value="3">3 dagen</option>
-                    <option value="7" selected>7 dagen</option>
-                    <option value="14">14 dagen</option>
-                    <option value="30">30 dagen</option>
-                    <option value="60">60 dagen</option>
-                    <option value="90">90 dagen</option>
-                    <option value="180">180 dagen</option>
-                    <option value="365">1 jaar</option>
-                    <option value="730">2 jaar</option>
-                    <option value="custom">Custom datums…</option>
+                    <optgroup label="Recent">
+                        <option value="3">3 dagen</option>
+                        <option value="7" selected>7 dagen</option>
+                        <option value="14">14 dagen</option>
+                        <option value="30">30 dagen</option>
+                        <option value="60">60 dagen</option>
+                        <option value="90">90 dagen</option>
+                        <option value="180">180 dagen</option>
+                        <option value="365">1 jaar</option>
+                        <option value="730">2 jaar</option>
+                    </optgroup>
+                    <optgroup label="Historische marktcycli">
+                        <option value="preset:bullrun-2020-21">🚀 Bull run (okt 2020 → nov 2021)</option>
+                        <option value="preset:bear-2022">🐻 Bear markt (heel 2022)</option>
+                        <option value="preset:sideways-2023h1">➡️ Zijwaarts/herstel (H1 2023)</option>
+                    </optgroup>
+                    <optgroup label="Eigen keuze">
+                        <option value="custom">Custom datums…</option>
+                    </optgroup>
                 </select>
             </div>
             <div>
