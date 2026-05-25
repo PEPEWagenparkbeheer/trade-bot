@@ -180,6 +180,7 @@ async function runBacktestUI() {
         btLastAlternatives = alternatives;
 
         renderKpiTable(results, alternatives, buyHold, startCap);
+        renderDiagnose(results);
         renderEquityChart(results, alternatives, buyHold);
         document.getElementById('bt-results').classList.remove('hidden');
 
@@ -265,6 +266,70 @@ function renderKpiTable(results, alternatives, buyHold, startCap) {
 
 function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+
+// --- Diagnose panel: regime breakdown per Adaptief profiel ---
+const REGIME_COLORS = {
+    'bull': '#f59e0b', 'neutral': '#06b6d4', 'bear': '#ef4444',
+    'above-far': '#f59e0b', 'above-close': '#06b6d4',
+    'bear-falling': '#dc2626', 'bear-rising': '#fb923c',
+};
+const REGIME_LABELS = {
+    'bull': '⏸ Bull (pauze)', 'neutral': '➡️ Neutraal', 'bear': '🐻 Bear',
+    'above-far': '⏸ Boven MA >10% (pauze)', 'above-close': '➡️ Boven MA <10%',
+    'bear-falling': '🐻↘ Bear-dalend', 'bear-rising': '🐻↗ Bear-stijgend',
+};
+
+function renderDiagnose(results) {
+    const filtered = results.filter(r =>
+        r.profile.use_200ma_filter || r.profile.use_regime_filter || r.profile.use_slope_filter
+    );
+    const section = document.getElementById('bt-diagnose-section');
+    const content = document.getElementById('bt-diagnose-content');
+    if (!filtered.length) { section.classList.add('hidden'); return; }
+    section.classList.remove('hidden');
+
+    content.innerHTML = filtered.map(r => {
+        const s = r.stats;
+        const total = s.regimeTotalTicks || 0;
+        const dist = s.regimeDistribution || {};
+        const sortedRegimes = Object.entries(dist).sort((a, b) => b[1] - a[1]);
+
+        const bars = sortedRegimes.map(([key, count]) => {
+            const pct = total ? (count / total * 100) : 0;
+            const color = REGIME_COLORS[key] || '#64748b';
+            const label = REGIME_LABELS[key] || key;
+            return `
+                <div class="text-xs">
+                    <div class="flex justify-between mb-0.5">
+                        <span>${label}</span>
+                        <span class="text-slate-500">${pct.toFixed(1)}% · ${count.toLocaleString()} ticks</span>
+                    </div>
+                    <div class="h-1.5 bg-slate-800 rounded overflow-hidden">
+                        <div class="h-full" style="background:${color};width:${pct.toFixed(2)}%"></div>
+                    </div>
+                </div>`;
+        }).join('');
+
+        const pausedTotal = (s.pausedBuys || 0) + (s.pausedByRegime || 0);
+        const conclusie = total === 0
+            ? '⚠ Geen regime-data — fetch faalde of seed periode ontbrak'
+            : pausedTotal === 0 && s.totalTrades > 0
+                ? `✓ Filter was actief maar blokkeerde 0 BUYs — markt zat nooit in een pauze-regime tijdens een BUY-moment. Rendement = puur RSI-strategie.`
+                : pausedTotal > 0
+                    ? `✓ Filter blokkeerde ~${pausedTotal.toLocaleString()} BUY-signalen tijdens pauze-regimes. Pauze werkt correct. ${s.totalTrades} trades hebben dus pre-pauze of post-pauze plaatsgevonden.`
+                    : `✓ Filter actief. ${s.totalTrades} trades.`;
+
+        return `
+            <div class="border border-slate-800 rounded-lg p-3 sm:p-4">
+                <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                    <div class="font-semibold text-sm" style="color:${r.profile.color}">${r.profile.label}</div>
+                    <div class="text-xs text-slate-500">${total.toLocaleString()} ticks · ${s.totalTrades} trades · ~${pausedTotal.toLocaleString()} BUYs gepauzeerd</div>
+                </div>
+                <div class="space-y-1.5 mb-3">${bars}</div>
+                <div class="text-xs text-slate-400 italic">${conclusie}</div>
+            </div>`;
+    }).join('');
 }
 
 function renderEquityChart(results, alternatives, buyHold) {
@@ -418,6 +483,9 @@ function exportBacktestResults() {
         opens: r.stats.opens,
         sells: r.stats.sells,
         stops: r.stats.stops,
+        paused_by_filter: (r.stats.pausedBuys || 0) + (r.stats.pausedByRegime || 0),
+        regime_ticks_total: r.stats.regimeTotalTicks || 0,
+        regime_distribution: JSON.stringify(r.stats.regimeDistribution || {}),
     }));
     summary.push({
         profiel: 'Buy & Hold (benchmark)', eindwaarde: round2(btLastBuyHold.finalValue),

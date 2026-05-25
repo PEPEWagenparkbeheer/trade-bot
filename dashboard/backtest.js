@@ -256,7 +256,10 @@ function decide(rsi15m, rsi1h, profile, regime = null, regimeV3 = null) {
 
 function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000, marketContext = null) {
     const pp = new PaperPortfolio(profile, startCap);
-    let pausedBuys = 0;   // hoeveel BUY-signalen genegeerd door 200MA filter
+    let pausedBuys = 0;             // 200MA pauze van V1
+    let pausedByRegime = 0;         // V2/V3 pauze (bull / above-far)
+    const regimeDist = {};          // count per regime tijdens deze backtest run
+    let regimeTotalTicks = 0;       // alle ticks met geldig regime
 
     // Pre-compute RSI per pair
     const rsi15mByPair = {};
@@ -328,6 +331,25 @@ function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000, m
             const regime   = (profile.use_regime_filter && marketContext) ? marketContext.regimeAt(t) : null;
             const regimeV3 = (profile.use_slope_filter  && marketContext) ? marketContext.regimeV3At(t) : null;
             const action = decide(r15, r1h, profile, regime, regimeV3);
+
+            // Diagnostiek: tel regime-distributie + heuristische 'paused-by-regime' counter.
+            // Heuristic: BTC RSI 15m < default oversold drempel (zonder filter) tijdens
+            // bull/above-far. Geeft ruwe indicatie hoe vaak filter daadwerkelijk BUYs blokkeerde.
+            const regimeKey = regimeV3 || regime;
+            if (regimeKey) {
+                regimeDist[regimeKey] = (regimeDist[regimeKey] || 0) + 1;
+                regimeTotalTicks++;
+                const isPaused = regimeKey === 'bull' || regimeKey === 'above-far';
+                if (isPaused) {
+                    // Welke drempel zou normaal gelden? Voor V2: regime_bear ?? rsi_oversold
+                    // Voor V3: regime_bear_falling ?? rsi_oversold
+                    const fallbackOs = profile.regime_bear?.[0]
+                        ?? profile.regime_bear_falling?.[0]
+                        ?? profile.rsi_oversold;
+                    const trendOk = profile.trend_filter == null || r1h < profile.trend_filter;
+                    if (r15 < fallbackOs && trendOk) pausedByRegime++;
+                }
+            }
             const price = prices[pair];
             if (action === 'BUY') {
                 // V1 200MA marktfilter: pauzeer BUY's tijdens bull market (alleen Adaptief V1)
@@ -359,6 +381,9 @@ function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000, m
 
     const stats = computeStats(pp, lastPrices, opens, sells, stops);
     stats.pausedBuys = pausedBuys;
+    stats.pausedByRegime = pausedByRegime;
+    stats.regimeDistribution = regimeDist;
+    stats.regimeTotalTicks = regimeTotalTicks;
     return {
         profile,
         startCap,
