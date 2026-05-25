@@ -44,14 +44,45 @@ def compute_market_state(pair: str) -> MarketState:
     )
 
 
-def evaluate_from_state(state: MarketState, profile: Profile, regime: Optional[str] = None) -> Signal:
+def evaluate_from_state(
+    state: MarketState,
+    profile: Profile,
+    regime: Optional[str] = None,
+    regime_v3: Optional[str] = None,
+) -> Signal:
     """
-    Genereer signaal. Voor V2 (use_regime_filter=True):
-    - regime="bull"   → HOLD (pauzeer, geen BUY)
-    - regime="bear"   → gebruik profile.regime_bear drempels
-    - regime="neutral"→ gebruik profile.regime_neutral drempels
-    Andere profielen negeren `regime` en gebruiken hun eigen drempels.
+    Genereer signaal. Drie filtertypes:
+    - V1 (use_200ma_filter): geregeld in OrderExecutor, hier geen actie
+    - V2 (use_regime_filter): regime="bear"/"neutral"/"bull"
+    - V3 (use_slope_filter):  regime_v3="bear-falling"/"bear-rising"/"above-close"/"above-far"
+
+    Voor V2/V3 worden RSI-drempels per regime overschreven; voor "bull"/"above-far"
+    wordt direct HOLD geretourneerd (pauze).
     """
+    # V3 — slope-aware vier-state filter
+    if profile.use_slope_filter and regime_v3 is not None:
+        if regime_v3 == "above-far":
+            return Signal(
+                pair=state.pair, action=Action.HOLD,
+                price=state.price, rsi_15m=state.rsi_15m, rsi_1h=state.rsi_1h,
+                reason=f"[{profile.label}] BULL (>10% MA) — gepauzeerd",
+            )
+        thresholds = {
+            "bear-falling": profile.regime_bear_falling,
+            "bear-rising":  profile.regime_bear_rising,
+            "above-close":  profile.regime_above_close,
+        }.get(regime_v3)
+        if thresholds is not None:
+            os, ob = thresholds
+            effective = replace(profile, rsi_oversold=os, rsi_overbought=ob)
+            action, reason = _decide(state.rsi_15m, state.rsi_1h, effective)
+            reason = f"[{profile.label}/{regime_v3}] {reason.split('] ', 1)[-1]}"
+            return Signal(
+                pair=state.pair, action=action,
+                price=state.price, rsi_15m=state.rsi_15m, rsi_1h=state.rsi_1h, reason=reason,
+            )
+
+    # V2 — 3-state filter
     if profile.use_regime_filter and regime is not None:
         if regime == "bull":
             return Signal(
@@ -70,6 +101,7 @@ def evaluate_from_state(state: MarketState, profile: Profile, regime: Optional[s
                 price=state.price, rsi_15m=state.rsi_15m, rsi_1h=state.rsi_1h, reason=reason,
             )
 
+    # Default — geen filter
     action, reason = _decide(state.rsi_15m, state.rsi_1h, profile)
     return Signal(
         pair=state.pair, action=action,

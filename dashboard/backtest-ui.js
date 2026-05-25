@@ -110,7 +110,7 @@ async function runBacktestUI() {
         // Fetch BTC daily candles vanaf 200 dagen vóór de backtest-start, zodat de
         // rolling 200MA al geldig is bij de eerste backtest-tick.
         let marketContext = null;
-        const needsMa = PROFILES.some(p => p.use_200ma_filter || p.use_regime_filter);
+        const needsMa = PROFILES.some(p => p.use_200ma_filter || p.use_regime_filter || p.use_slope_filter);
         if (needsMa) {
             setBtStatus('Daily BTC candles ophalen voor 200MA filter...');
             const maSinceMs = period.sinceMs - 200 * 86400_000;

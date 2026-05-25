@@ -82,12 +82,12 @@ function rollingMA(values, window) {
 // Bouw market-context object dat door runBacktest gebruikt wordt voor:
 // - V1 isBullAt(): bull-check met 3% buffer (Adaptief)
 // - V2 regimeAt(): "bear"/"neutral"/"bull" met ±10% drempels (Adaptief V2)
-function buildMarketContext(btcDaily, buffer = 0.03, regimeThreshold = 0.10) {
+function buildMarketContext(btcDaily, buffer = 0.03, regimeThreshold = 0.10, slopeLagDays = 10) {
     const closes = btcDaily.map(c => c.close);
     const timestamps = btcDaily.map(c => c.timestamp);
     const ma200 = rollingMA(closes, 200);
     return {
-        timestamps, closes, ma200, buffer, regimeThreshold,
+        timestamps, closes, ma200, buffer, regimeThreshold, slopeLagDays,
         indexAt(t) {
             let lo = 0, hi = this.timestamps.length - 1, ans = -1;
             while (lo <= hi) {
@@ -102,6 +102,13 @@ function buildMarketContext(btcDaily, buffer = 0.03, regimeThreshold = 0.10) {
             if (i < 0 || this.ma200[i] == null) return null;
             return (this.closes[i] - this.ma200[i]) / this.ma200[i];
         },
+        slopeAt(t) {
+            // MA(today) - MA(N dagen geleden) in EUR; positief = stijgend
+            const i = this.indexAt(t);
+            const j = i - this.slopeLagDays;
+            if (i < 0 || j < 0 || this.ma200[i] == null || this.ma200[j] == null) return 0;
+            return this.ma200[i] - this.ma200[j];
+        },
         isBullAt(t) {
             const d = this.distanceAt(t);
             return d != null && d > this.buffer;
@@ -112,6 +119,15 @@ function buildMarketContext(btcDaily, buffer = 0.03, regimeThreshold = 0.10) {
             if (d > this.regimeThreshold)  return 'bull';
             if (d < -this.regimeThreshold) return 'bear';
             return 'neutral';
+        },
+        // V3: slope-aware 4-state classificatie
+        regimeV3At(t) {
+            const d = this.distanceAt(t);
+            if (d == null) return null;
+            if (d > this.regimeThreshold) return 'above-far';
+            if (d >= 0) return 'above-close';
+            const s = this.slopeAt(t);
+            return s < 0 ? 'bear-falling' : 'bear-rising';
         },
     };
 }
@@ -210,11 +226,20 @@ class PaperPortfolio {
 // Strategie-decide (port van strategy.rsi_strategy._decide)
 // ============================================================================
 
-function decide(rsi15m, rsi1h, profile, regime = null) {
-    // V2 regime filter: pas RSI-drempels aan per marktregime, of pauzeer in bull
+function decide(rsi15m, rsi1h, profile, regime = null, regimeV3 = null) {
     let os = profile.rsi_oversold;
     let ob = profile.rsi_overbought;
-    if (profile.use_regime_filter && regime) {
+    // V3 (slope-aware, 4 regimes) — neemt voorrang als profiel V3 gebruikt
+    if (profile.use_slope_filter && regimeV3) {
+        if (regimeV3 === 'above-far') return 'HOLD';
+        const map = {
+            'bear-falling': profile.regime_bear_falling,
+            'bear-rising':  profile.regime_bear_rising,
+            'above-close':  profile.regime_above_close,
+        };
+        const t = map[regimeV3];
+        if (t) [os, ob] = t;
+    } else if (profile.use_regime_filter && regime) {
         if (regime === 'bull') return 'HOLD';
         if (regime === 'bear' && profile.regime_bear) [os, ob] = profile.regime_bear;
         if (regime === 'neutral' && profile.regime_neutral) [os, ob] = profile.regime_neutral;
@@ -300,8 +325,9 @@ function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000, m
             const r1h = rsi1hByPair[pair][h1i];
             if (r1h == null) continue;
 
-            const regime = (profile.use_regime_filter && marketContext) ? marketContext.regimeAt(t) : null;
-            const action = decide(r15, r1h, profile, regime);
+            const regime   = (profile.use_regime_filter && marketContext) ? marketContext.regimeAt(t) : null;
+            const regimeV3 = (profile.use_slope_filter  && marketContext) ? marketContext.regimeV3At(t) : null;
+            const action = decide(r15, r1h, profile, regime, regimeV3);
             const price = prices[pair];
             if (action === 'BUY') {
                 // V1 200MA marktfilter: pauzeer BUY's tijdens bull market (alleen Adaptief V1)

@@ -21,6 +21,9 @@ def get_status():
             "buffer_pct":     0.03,
             "regime":         r.regime,            # V2: bear|neutral|bull (10% drempels)
             "regime_pct":     0.10,
+            "slope":          r.slope,             # V3: MA(now) - MA(10d geleden)
+            "slope_pct":      r.slope_pct,
+            "regime_v3":      r.regime_v3,         # V3: bear-falling|bear-rising|above-close|above-far
         }
     except Exception as e:
         regime = {"error": str(e)}
@@ -44,6 +47,10 @@ def get_status():
                 "use_regime_filter": p.use_regime_filter,
                 "regime_bear": list(p.regime_bear) if p.regime_bear else None,
                 "regime_neutral": list(p.regime_neutral) if p.regime_neutral else None,
+                "use_slope_filter": p.use_slope_filter,
+                "regime_bear_falling": list(p.regime_bear_falling) if p.regime_bear_falling else None,
+                "regime_bear_rising":  list(p.regime_bear_rising)  if p.regime_bear_rising  else None,
+                "regime_above_close":  list(p.regime_above_close)  if p.regime_above_close  else None,
             } for p in all_profiles()
         ],
     }

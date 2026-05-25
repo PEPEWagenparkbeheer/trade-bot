@@ -20,7 +20,7 @@ from typing import Dict, List
 
 import config
 from api import db
-from data.market_filter import get_market_regime
+from data.market_filter import get_market_regime, get_market_regime_v3
 from engine.logger import get_logger
 from engine.order_executor import OrderExecutor
 from portfolio.manager import PortfolioManager, PAPER_CAPITAL_DEFAULT
@@ -75,12 +75,16 @@ def run_tick(profiles: List[Profile]) -> None:
         log.error("Geen marktdata beschikbaar — tick overgeslagen")
         return
 
-    # Eén regime-lookup per tick (cached 1u), gedeeld door alle V2 profielen
+    # Regime-lookups per tick (cached 1u), gedeeld over alle profielen die ze nodig hebben
     regime = None
-    if any(p.use_regime_filter for p in profiles):
+    regime_v3 = None
+    if any(p.use_regime_filter for p in profiles) or any(p.use_slope_filter for p in profiles):
         try:
-            regime = get_market_regime()
-            log.info(f"MARKET regime (V2): {regime.upper()}")
+            from data.market_filter import market_regime as _mr
+            mr = _mr()
+            regime = mr.regime
+            regime_v3 = mr.regime_v3
+            log.info(f"MARKET regime  V2={regime.upper()}  V3={regime_v3.upper()}  slope={mr.slope_pct*100:+.2f}%")
         except Exception as e:
             log.error(f"Regime fetch faalde: {e}")
 
@@ -95,7 +99,7 @@ def run_tick(profiles: List[Profile]) -> None:
 
         for pair, state in market.items():
             prices[pair] = state.price
-            signal = evaluate_from_state(state, profile, regime=regime)
+            signal = evaluate_from_state(state, profile, regime=regime, regime_v3=regime_v3)
             result = executor.handle_tick(signal, state.price)
 
             log.info(f"  [{profile.label}] {pair} -> {result.action_taken}  ({result.detail})")

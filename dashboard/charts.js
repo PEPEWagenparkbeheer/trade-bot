@@ -38,18 +38,26 @@ async function remoteApi(path, params) {
         // Marktregime inline berekend uit Bitvavo daily candles.
         let market_regime = null;
         try {
-            const r = await fetch('https://api.bitvavo.com/v2/BTC-EUR/candles?interval=1d&limit=200');
+            const r = await fetch('https://api.bitvavo.com/v2/BTC-EUR/candles?interval=1d&limit=210');
             const raw = await r.json();
-            if (Array.isArray(raw) && raw.length >= 50) {
+            if (Array.isArray(raw) && raw.length >= 210) {
                 const closes = raw.slice().reverse().map(c => Number(c[4]));
-                const ma = closes.reduce((a, b) => a + b, 0) / closes.length;
+                const ma = closes.slice(-200).reduce((a, b) => a + b, 0) / 200;
+                const maPrev = closes.slice(-210, -10).reduce((a, b) => a + b, 0) / 200;
                 const price = closes[closes.length - 1];
                 const distance = (price - ma) / ma;
+                const slope = ma - maPrev;
+                const slope_pct = slope / ma;
                 const regime = distance > 0.10 ? 'bull' : (distance < -0.10 ? 'bear' : 'neutral');
+                let regime_v3;
+                if (distance > 0.10) regime_v3 = 'above-far';
+                else if (distance >= 0) regime_v3 = 'above-close';
+                else regime_v3 = slope < 0 ? 'bear-falling' : 'bear-rising';
                 market_regime = {
                     btc_price: price, ma_200: ma, distance_pct: distance,
                     is_bull: distance > 0.03, buffer_pct: 0.03,
                     regime, regime_pct: 0.10,
+                    slope, slope_pct, regime_v3,
                 };
             }
         } catch (e) { /* niet kritisch */ }
@@ -63,7 +71,8 @@ async function remoteApi(path, params) {
                 { key: 'hoog',      label: 'Hoog',        color: '#f59e0b', rsi_oversold: 35, rsi_overbought: 65, trend_filter: 60,   max_positions: 3, risk_per_trade: 0.03, stop_loss_pct: 0.04, use_200ma_filter: false, use_regime_filter: false, regime_bear: null, regime_neutral: null },
                 { key: 'extreem',   label: 'Extreem',     color: '#ef4444', rsi_oversold: 40, rsi_overbought: 60, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false, use_regime_filter: false, regime_bear: null, regime_neutral: null },
                 { key: 'adaptief',  label: 'Adaptief',    color: '#a855f7', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: true,  use_regime_filter: false, regime_bear: null, regime_neutral: null },
-                { key: 'adaptief2', label: 'Adaptief V2', color: '#ec4899', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false, use_regime_filter: true,  regime_bear: [20, 80], regime_neutral: [25, 75] },
+                { key: 'adaptief2', label: 'Adaptief V2', color: '#ec4899', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false, use_regime_filter: true,  regime_bear: [20, 80], regime_neutral: [25, 75], use_slope_filter: false },
+                { key: 'adaptief3', label: 'Adaptief V3', color: '#06b6d4', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false, use_regime_filter: false, use_slope_filter: true, regime_bear_falling: [20, 80], regime_bear_rising: [25, 75], regime_above_close: [28, 72] },
             ],
         };
     }
@@ -159,6 +168,22 @@ function marketRegimeBadge(profile) {
     if (!MARKET_REGIME || MARKET_REGIME.error) return '';
     const r = MARKET_REGIME;
     const dist = (r.distance_pct * 100).toFixed(1);
+
+    if (profile.use_slope_filter) {
+        const rv3 = r.regime_v3 || 'above-close';
+        const slopePct = r.slope_pct != null ? (r.slope_pct * 100).toFixed(2) + '%' : '?';
+        if (rv3 === 'above-far') {
+            return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="BTC ${dist}% boven 200MA — V3 pauzeert">⏸ Bull — gepauzeerd</span>`;
+        }
+        if (rv3 === 'above-close') {
+            return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/30" title="BTC binnen 10% boven 200MA — V3 gebruikt 28/72">➡️ Boven MA — 28/72</span>`;
+        }
+        if (rv3 === 'bear-falling') {
+            return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-red-500/20 text-red-300 border border-red-500/30" title="BTC onder 200MA + MA daalt ${slopePct} — V3 gebruikt Extreem 20/80">🐻 ↘ Bear-dalend — 20/80</span>`;
+        }
+        // bear-rising
+        return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-orange-500/20 text-orange-300 border border-orange-500/30" title="BTC onder 200MA maar MA stijgt ${slopePct} — V3 gebruikt 25/75 (herstel mogelijk)">🐻 ↗ Bear-stijgend — 25/75</span>`;
+    }
 
     if (profile.use_regime_filter) {
         const regime = r.regime || 'neutral';

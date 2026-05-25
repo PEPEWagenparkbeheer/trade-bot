@@ -36,6 +36,15 @@ class Profile:
     use_regime_filter: bool = False
     regime_bear: Optional[Tuple[float, float]] = None     # (oversold, overbought)
     regime_neutral: Optional[Tuple[float, float]] = None
+    # V3 slope-aware filter — vier regimes:
+    #   bear-falling (BTC <MA + MA daalt)   → regime_bear_falling drempels
+    #   bear-rising  (BTC <MA + MA stijgt)  → regime_bear_rising drempels
+    #   above-close  (0..+10% MA)           → regime_above_close drempels
+    #   above-far    (>+10% MA)             → pauzeer (geen BUY)
+    use_slope_filter: bool = False
+    regime_bear_falling: Optional[Tuple[float, float]] = None
+    regime_bear_rising:  Optional[Tuple[float, float]] = None
+    regime_above_close:  Optional[Tuple[float, float]] = None
 
 
 PROFILES: Dict[str, Profile] = {
@@ -85,6 +94,21 @@ PROFILES: Dict[str, Profile] = {
         use_regime_filter=True,
         regime_bear=(20, 80),
         regime_neutral=(25, 75),
+    ),
+    # Adaptief V3 = V2 + slope-richting van de 200MA.
+    # In bear-markt nuanceren: bij dalende MA volle kracht (oversold dips kopen),
+    # bij stijgende MA voorzichtiger (herstel mogelijk, niet alles meer 20/80).
+    # Boven MA binnen 10%: gematigd (28/72). >10% boven: pauze.
+    "adaptief3": Profile(
+        key="adaptief3", label="Adaptief V3", color="#06b6d4",
+        rsi_oversold=20, rsi_overbought=80,   # fallback
+        trend_filter=None,
+        max_positions=4,
+        risk_per_trade=0.05, stop_loss_pct=0.05,
+        use_slope_filter=True,
+        regime_bear_falling=(20, 80),
+        regime_bear_rising=(25, 75),
+        regime_above_close=(28, 72),
     ),
 }
 
