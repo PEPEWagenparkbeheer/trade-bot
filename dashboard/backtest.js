@@ -64,6 +64,48 @@ async function fetchHistoricalCandles(pair, timeframe, sinceMs, untilMs, progres
 }
 
 // ============================================================================
+// 200-daags MA filter (voor Adaptief-profiel)
+// ============================================================================
+
+// Rolling simple moving average. Returns array met null tot index window-1.
+function rollingMA(values, window) {
+    const out = new Array(values.length).fill(null);
+    let sum = 0;
+    for (let i = 0; i < values.length; i++) {
+        sum += values[i];
+        if (i >= window) sum -= values[i - window];
+        if (i >= window - 1) out[i] = sum / window;
+    }
+    return out;
+}
+
+// Bouw market-context object dat door runBacktest gebruikt wordt voor bull-checks.
+// `btcDaily` = chronologisch gesorteerde daily candles van BTC/EUR.
+function buildMarketContext(btcDaily, buffer = 0.03) {
+    const closes = btcDaily.map(c => c.close);
+    const timestamps = btcDaily.map(c => c.timestamp);
+    const ma200 = rollingMA(closes, 200);
+    return {
+        timestamps, closes, ma200, buffer,
+        // Binary search: laatste daily index met ts <= t
+        indexAt(t) {
+            let lo = 0, hi = this.timestamps.length - 1, ans = -1;
+            while (lo <= hi) {
+                const mid = (lo + hi) >> 1;
+                if (this.timestamps[mid] <= t) { ans = mid; lo = mid + 1; }
+                else hi = mid - 1;
+            }
+            return ans;
+        },
+        isBullAt(t) {
+            const i = this.indexAt(t);
+            if (i < 0 || this.ma200[i] == null) return false;
+            return this.closes[i] > this.ma200[i] * (1 + this.buffer);
+        },
+    };
+}
+
+// ============================================================================
 // RSI (Wilder) — incrementeel berekend over een array close-prijzen
 // ============================================================================
 
@@ -168,8 +210,9 @@ function decide(rsi15m, rsi1h, profile) {
 // Backtest runner: multi-pair, single profile
 // ============================================================================
 
-function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000) {
+function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000, marketContext = null) {
     const pp = new PaperPortfolio(profile, startCap);
+    let pausedBuys = 0;   // hoeveel BUY-signalen genegeerd door 200MA filter
 
     // Pre-compute RSI per pair
     const rsi15mByPair = {};
@@ -241,6 +284,11 @@ function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000) {
             const action = decide(r15, r1h, profile);
             const price = prices[pair];
             if (action === 'BUY') {
+                // 200MA marktfilter: pauzeer BUY's tijdens bull market
+                if (profile.use_200ma_filter && marketContext && marketContext.isBullAt(t)) {
+                    pausedBuys++;
+                    continue;
+                }
                 if (pp.openLong(pair, price, t)) opens++;
             } else if (action === 'SELL') {
                 if (pp.close(pair, price, t, 'sell-signal')) sells++;
@@ -262,13 +310,15 @@ function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000) {
     }
     pp.recordEquity(lastT, {});
 
+    const stats = computeStats(pp, lastPrices, opens, sells, stops);
+    stats.pausedBuys = pausedBuys;
     return {
         profile,
         startCap,
         finalValue: pp.totalValue({}),
         trades: pp.trades,
         equity: pp.equity,
-        stats: computeStats(pp, lastPrices, opens, sells, stops),
+        stats,
     };
 }
 
@@ -416,4 +466,6 @@ window.Backtest = {
     findTopAlternatives,
     rsiSeries,
     decide,
+    rollingMA,
+    buildMarketContext,
 };

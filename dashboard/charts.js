@@ -15,6 +15,7 @@ const LOCAL = window.BOT_CONFIG?.LOCAL ?? true;
 
 // Profielen worden uit /api/status geladen (single source of truth)
 let PROFILES = [];           // [{key,label,color,...}]
+let MARKET_REGIME = null;    // { is_bull, distance_pct, ma_200, btc_price } — voor 200MA badge
 let currentProfileKey = 'gemiddeld';
 let activeTab = 'vergelijking';
 
@@ -33,16 +34,32 @@ async function api(path, params = {}) {
 
 async function remoteApi(path, params) {
     if (path === '/status') {
-        // Hardcoded fallback (matches profiles.py — moet sync blijven)
+        // Hardcoded fallback (matches profiles.py — moet sync blijven).
+        // Voor de 200MA marktregime: fetch direct daily BTC candles, bereken inline.
+        let market_regime = null;
+        try {
+            const r = await fetch('https://api.bitvavo.com/v2/BTC-EUR/candles?interval=1d&limit=200');
+            const raw = await r.json();
+            if (Array.isArray(raw) && raw.length >= 50) {
+                // Bitvavo: nieuwste eerst — oudest eerst is duidelijker
+                const closes = raw.slice().reverse().map(c => Number(c[4]));
+                const ma = closes.reduce((a, b) => a + b, 0) / closes.length;
+                const price = closes[closes.length - 1];
+                const distance = (price - ma) / ma;
+                market_regime = { btc_price: price, ma_200: ma, distance_pct: distance, is_bull: distance > 0.03, buffer_pct: 0.03 };
+            }
+        } catch (e) { /* niet kritisch */ }
         return {
             env: 'paper', exchange: 'bitvavo',
             pairs: ['BTC/EUR', 'ETH/EUR'],
             rsi_period: 14, paper_capital: 1000,
+            market_regime,
             profiles: [
-                { key: 'laag',      label: 'Laag',      color: '#22c55e', rsi_oversold: 25, rsi_overbought: 75, trend_filter: 50,  max_positions: 1, risk_per_trade: 0.01, stop_loss_pct: 0.02 },
-                { key: 'gemiddeld', label: 'Gemiddeld', color: '#3b82f6', rsi_oversold: 30, rsi_overbought: 70, trend_filter: 55,  max_positions: 2, risk_per_trade: 0.02, stop_loss_pct: 0.03 },
-                { key: 'hoog',      label: 'Hoog',      color: '#f59e0b', rsi_oversold: 35, rsi_overbought: 65, trend_filter: 60,  max_positions: 3, risk_per_trade: 0.03, stop_loss_pct: 0.04 },
-                { key: 'extreem',   label: 'Extreem',   color: '#ef4444', rsi_oversold: 40, rsi_overbought: 60, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05 },
+                { key: 'laag',      label: 'Laag',      color: '#22c55e', rsi_oversold: 25, rsi_overbought: 75, trend_filter: 50,  max_positions: 1, risk_per_trade: 0.01, stop_loss_pct: 0.02, use_200ma_filter: false },
+                { key: 'gemiddeld', label: 'Gemiddeld', color: '#3b82f6', rsi_oversold: 30, rsi_overbought: 70, trend_filter: 55,  max_positions: 2, risk_per_trade: 0.02, stop_loss_pct: 0.03, use_200ma_filter: false },
+                { key: 'hoog',      label: 'Hoog',      color: '#f59e0b', rsi_oversold: 35, rsi_overbought: 65, trend_filter: 60,  max_positions: 3, risk_per_trade: 0.03, stop_loss_pct: 0.04, use_200ma_filter: false },
+                { key: 'extreem',   label: 'Extreem',   color: '#ef4444', rsi_oversold: 40, rsi_overbought: 60, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false },
+                { key: 'adaptief',  label: 'Adaptief',  color: '#a855f7', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: true  },
             ],
         };
     }
@@ -125,9 +142,21 @@ async function init() {
 async function loadStatus() {
     const r = await api('/status');
     PROFILES = r.profiles;
+    MARKET_REGIME = r.market_regime || null;
     document.getElementById('status-line').textContent =
-        `${r.exchange} · ${r.pairs.join(' / ')} · 4 profielen parallel · €${r.paper_capital} startkapitaal/profiel`;
+        `${r.exchange} · ${r.pairs.join(' / ')} · ${PROFILES.length} profielen parallel · €${r.paper_capital} startkapitaal/profiel`;
     document.getElementById('env-badge').textContent = r.env;
+}
+
+// 200MA badge HTML voor profielen met use_200ma_filter
+function marketRegimeBadge(profile) {
+    if (!profile.use_200ma_filter || !MARKET_REGIME || MARKET_REGIME.error) return '';
+    const r = MARKET_REGIME;
+    const dist = (r.distance_pct * 100).toFixed(1);
+    if (r.is_bull) {
+        return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="BTC ${dist}% boven 200MA — Adaptief pauzeert nieuwe BUY's">⏸ Gepauzeerd</span>`;
+    }
+    return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" title="BTC ${dist}% t.o.v. 200MA — Adaptief handelt normaal">▶ Actief</span>`;
 }
 
 function setupTabs() {
@@ -221,8 +250,10 @@ function updateProfileParams() {
     const p = PROFILES.find(x => x.key === currentProfileKey);
     if (!p) return;
     const tf = p.trend_filter === null ? 'geen' : `<${p.trend_filter}`;
-    document.getElementById('profile-params').textContent =
-        `BUY<${p.rsi_oversold} (tf ${tf}) · SELL>${p.rsi_overbought} · max ${p.max_positions} pos · risk ${(p.risk_per_trade * 100).toFixed(0)}% · SL ${(p.stop_loss_pct * 100).toFixed(0)}%`;
+    const maExtra = p.use_200ma_filter ? ' · 200MA-filter aan' : '';
+    const badge = marketRegimeBadge(p);
+    const el = document.getElementById('profile-params');
+    el.innerHTML = `${badge ? badge + ' ' : ''}<span class="text-slate-500">BUY&lt;${p.rsi_oversold} (tf ${tf}) · SELL&gt;${p.rsi_overbought} · max ${p.max_positions} pos · risk ${(p.risk_per_trade * 100).toFixed(0)}% · SL ${(p.stop_loss_pct * 100).toFixed(0)}%${maExtra}</span>`;
     document.getElementById('kpi-open-max').textContent = p.max_positions;
 }
 
@@ -270,11 +301,13 @@ function drawCompareCards(profiles) {
         card.style.borderTopColor = p.color;
         card.style.cursor = 'pointer';
         card.title = 'Klik voor detail-overzicht';
+        const regimeBadge = marketRegimeBadge(p);
         card.innerHTML = `
             <div class="flex items-center justify-between mb-1.5 sm:mb-2 gap-1">
                 <div class="font-semibold text-sm sm:text-lg truncate" style="color:${p.color}">${p.label}</div>
                 <div class="text-[9px] sm:text-[10px] text-slate-500 shrink-0">${p.rsi_oversold}/${p.rsi_overbought}</div>
             </div>
+            ${regimeBadge ? `<div class="mb-1.5">${regimeBadge}</div>` : ''}
             <div class="text-base sm:text-2xl font-semibold ${pnlClass(change)} leading-tight">${fmtEur(total)}</div>
             <div class="text-[10px] sm:text-xs ${pnlClass(change)} mb-2 sm:mb-3">${fmtPct(change)}</div>
             <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] sm:text-xs">

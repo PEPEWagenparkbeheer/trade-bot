@@ -105,7 +105,20 @@ async function runBacktestUI() {
             candles1hByPair[pair] = c1h;
             setBtStatus(`${pair}: ${c15m.length.toLocaleString()} × 15m + ${c1h.length.toLocaleString()} × 1h geladen`);
         }
-        btLastCandles = { candlesByPair, candles1hByPair };
+
+        // 200MA market context — alleen nodig als een profiel use_200ma_filter heeft.
+        // Fetch BTC daily candles vanaf 200 dagen vóór de backtest-start, zodat de
+        // rolling 200MA al geldig is bij de eerste backtest-tick.
+        let marketContext = null;
+        const needsMa = PROFILES.some(p => p.use_200ma_filter);
+        if (needsMa) {
+            setBtStatus('Daily BTC candles ophalen voor 200MA filter...');
+            const maSinceMs = period.sinceMs - 200 * 86400_000;
+            const btcDaily = await Backtest.fetchHistoricalCandles('BTC/EUR', '1d', maSinceMs, period.untilMs, onProgress);
+            marketContext = Backtest.buildMarketContext(btcDaily, 0.03);
+            setBtStatus(`200MA geladen: ${btcDaily.length} daily candles (seed -200d voor rolling avg)`);
+        }
+        btLastCandles = { candlesByPair, candles1hByPair, marketContext };
 
         const totalCandles = Object.values(candlesByPair).reduce((s, c) => s + c.length, 0);
         setBtStatus(`Simuleren van ${totalCandles.toLocaleString()} candles voor 4 profielen...`);
@@ -114,7 +127,7 @@ async function runBacktestUI() {
         const t0 = performance.now();
         const results = PROFILES.map(p => ({
             profile: p,
-            ...Backtest.runBacktest(p, candlesByPair, candles1hByPair, startCap),
+            ...Backtest.runBacktest(p, candlesByPair, candles1hByPair, startCap, marketContext),
         }));
         const elapsedMain = Math.round(performance.now() - t0);
 
@@ -133,6 +146,8 @@ async function runBacktestUI() {
             const t1 = performance.now();
             const baseForAlt = PROFILES.find(p => p.key === 'gemiddeld') || PROFILES[1];
             const existing = PROFILES.map(p => ({ os: p.rsi_oversold, ob: p.rsi_overbought }));
+            // Alternatieven gebruiken Gemiddeld als base (geen 200MA filter),
+            // dus marketContext is hier irrelevant — voor consistency wel doorgeven.
             alternatives = Backtest.findTopAlternatives(
                 baseForAlt, candlesByPair, candles1hByPair, existing, 3, startCap, grid
             ).map((alt, i) => ({

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from api import db
+from data.market_filter import is_bull_market
 from portfolio.manager import ClosedTrade, PortfolioManager
 from portfolio.position import Position
 from strategy.signal import Action, Signal
@@ -49,6 +50,15 @@ class OrderExecutor:
         if signal.action == Action.BUY:
             if open_pos is not None:
                 return ExecutionResult(signal, "SKIPPED", "al open positie op pair")
+            # 200MA filter — alleen voor profielen die het opt-in hebben (Adaptief).
+            # In bull market: pauzeer nieuwe entries; bestaande SELL/stop blijven normaal.
+            if self.pm.profile.use_200ma_filter:
+                try:
+                    if is_bull_market():
+                        return ExecutionResult(signal, "PAUSED", "bull market — BTC >3% boven 200MA")
+                except Exception as e:
+                    # Filter mag de tick niet stoppen; log en negeer
+                    return ExecutionResult(signal, "SKIPPED", f"200MA-check faalde: {e}")
             if self.pm.at_max_positions():
                 return ExecutionResult(signal, "SKIPPED", f"max posities bereikt ({self.pm.profile.max_positions})")
             if self.pm.capital <= 0:
