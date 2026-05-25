@@ -34,6 +34,7 @@
     <nav class="max-w-7xl mx-auto px-4 sm:px-6 flex gap-1 border-t border-slate-900">
         <button data-tab="vergelijking" class="tab-btn tab-active">📊 Vergelijking</button>
         <button data-tab="detail" class="tab-btn">🔍 Detail</button>
+        <button data-tab="backtest" class="tab-btn">🧪 Backtest</button>
     </nav>
 </header>
 
@@ -191,6 +192,92 @@
     </section>
 </main>
 
+<!-- ============ TAB: BACKTEST ============ -->
+<main id="tab-backtest" class="tab-pane hidden max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6 pb-24">
+
+    <!-- Form -->
+    <section class="panel">
+        <h2 class="panel-title mb-3">🧪 Backtest — simuleer de strategie op historische marktdata</h2>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Periode</label>
+                <select id="bt-period" class="w-full bg-slate-800 text-sm rounded px-2 py-2 border border-slate-700">
+                    <option value="3">3 dagen</option>
+                    <option value="7" selected>7 dagen</option>
+                    <option value="14">14 dagen</option>
+                    <option value="30">30 dagen</option>
+                    <option value="60">60 dagen</option>
+                    <option value="90">90 dagen</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Pairs</label>
+                <select id="bt-pairs" class="w-full bg-slate-800 text-sm rounded px-2 py-2 border border-slate-700">
+                    <option value="both" selected>BTC + ETH</option>
+                    <option value="BTC/EUR">Alleen BTC</option>
+                    <option value="ETH/EUR">Alleen ETH</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Startkapitaal</label>
+                <select id="bt-capital" class="w-full bg-slate-800 text-sm rounded px-2 py-2 border border-slate-700">
+                    <option value="1000" selected>€1.000</option>
+                    <option value="5000">€5.000</option>
+                    <option value="10000">€10.000</option>
+                </select>
+            </div>
+            <div class="flex items-end">
+                <button id="bt-run" class="w-full export-btn-primary">▶ Run backtest</button>
+            </div>
+        </div>
+        <div id="bt-status" class="mt-3 text-xs text-slate-500"></div>
+    </section>
+
+    <!-- Resultaten -->
+    <div id="bt-results" class="hidden space-y-4 sm:space-y-6">
+        <!-- KPI tabel -->
+        <section class="panel">
+            <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                <h2 class="panel-title">Resultaten per profiel</h2>
+                <button id="bt-export" class="export-btn">⬇ Excel</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table id="bt-table" class="w-full text-xs sm:text-sm"></table>
+            </div>
+        </section>
+
+        <!-- Equity curve -->
+        <section class="panel">
+            <h2 class="panel-title mb-3">Equity curve — portfolio waarde over backtest periode</h2>
+            <div class="h-64 sm:h-96"><canvas id="bt-equity-chart"></canvas></div>
+        </section>
+
+        <!-- Optimizer -->
+        <section class="panel">
+            <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                <h2 class="panel-title">🎯 Drempel-optimalisatie</h2>
+                <div class="flex gap-2 items-center">
+                    <select id="bt-opt-base" class="bg-slate-800 text-xs rounded px-2 py-1.5 border border-slate-700">
+                        <option value="laag">basis = Laag</option>
+                        <option value="gemiddeld" selected>basis = Gemiddeld</option>
+                        <option value="hoog">basis = Hoog</option>
+                        <option value="extreem">basis = Extreem</option>
+                    </select>
+                    <button id="bt-optimize" class="export-btn">Scan drempels</button>
+                </div>
+            </div>
+            <div class="text-[11px] text-slate-500 mb-3">
+                Probeert 30+ combinaties van RSI-drempels op dezelfde historische data en sorteert op rendement.
+                Risk/stop/trend-filter blijven gelijk aan gekozen basis-profiel. Doel: ontdek of jouw huidige instellingen geluk hadden of écht werken.
+            </div>
+            <div id="bt-opt-status" class="text-xs text-slate-500 mb-3"></div>
+            <div class="overflow-x-auto">
+                <table id="bt-opt-table" class="w-full text-xs sm:text-sm hidden"></table>
+            </div>
+        </section>
+    </div>
+</main>
+
 <footer class="text-center text-xs text-slate-600 py-6">
     <span id="last-refresh">auto-refresh elke 30s</span>
 </footer>
@@ -216,6 +303,8 @@
 
 <script src="./charts.js"></script>
 <script src="./export.js"></script>
+<script src="./backtest.js"></script>
+<script src="./backtest-ui.js"></script>
 <script src="./chat.js"></script>
 </body>
 </html>
