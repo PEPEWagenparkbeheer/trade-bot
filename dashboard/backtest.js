@@ -355,12 +355,45 @@ function optimizeThresholds(baseProfile, candlesByPair, candles1hByPair, grid) {
     return results;
 }
 
+// ============================================================================
+// Top-N alternatieve drempels — grid scan, exclude bestaande profielen
+// ============================================================================
+
+function findTopAlternatives(base, candlesByPair, candles1hByPair, excludeCombos, topN = 3, startCap = 1000) {
+    // Fijnmaziger grid (10 × 11 = ~50 combinaties na ob>os filter)
+    const grid = {
+        oversold:   [20, 23, 25, 27, 30, 33, 35, 37, 40, 43],
+        overbought: [55, 57, 60, 63, 65, 67, 70, 73, 75, 78, 80],
+    };
+    const excludeSet = new Set(excludeCombos.map(c => `${c.os}-${c.ob}`));
+
+    const all = [];
+    for (const os of grid.oversold) {
+        for (const ob of grid.overbought) {
+            if (ob <= os + 5) continue;        // zinvolle spread
+            if (excludeSet.has(`${os}-${ob}`)) continue;
+            const variant = {
+                ...base,
+                key: `alt-${os}-${ob}`,
+                label: `Alt ${os}/${ob}`,
+                rsi_oversold: os,
+                rsi_overbought: ob,
+            };
+            const r = runBacktest(variant, candlesByPair, candles1hByPair, startCap);
+            all.push({ profile: variant, ...r });
+        }
+    }
+    all.sort((a, b) => b.stats.totalReturn - a.stats.totalReturn);
+    return all.slice(0, topN);
+}
+
 // Expose globaal voor charts.js
 window.Backtest = {
     fetchHistoricalCandles,
     runBacktest,
     buyAndHold,
     optimizeThresholds,
+    findTopAlternatives,
     rsiSeries,
     decide,
 };

@@ -1,7 +1,8 @@
 // Backtest UI — koppelt het form aan de runner in backtest.js,
 // rendert KPI-tabel, equity curve en optimizer ranking.
 
-let btLastResults = null;       // [{profile, ...result}, ...]
+let btLastResults = null;       // [{profile, ...result}, ...]   — 4 echte profielen
+let btLastAlternatives = null;  // top 3 wat-als profielen met volledige equity
 let btLastBuyHold = null;
 let btLastCandles = null;       // { candlesByPair, candles1hByPair }
 let btLastOpt = null;           // optimizer rijen
@@ -9,8 +10,10 @@ let btEquityChart = null;
 
 const BT_COLORS = {
     laag: '#22c55e', gemiddeld: '#3b82f6', hoog: '#f59e0b', extreem: '#ef4444',
-    'buy-hold': '#a855f7',
+    'buy-hold': '#94a3b8',     // grijs (was paars; paars gebruikt nu voor alternatives)
 };
+// Pastel/fuchsia tinten voor "wat als" lijnen — staan visueel naast de 4 base kleuren
+const BT_ALT_COLORS = ['#ec4899', '#a855f7', '#06b6d4'];
 
 function setBtStatus(msg) { document.getElementById('bt-status').textContent = msg; }
 function setBtOptStatus(msg) { document.getElementById('bt-opt-status').textContent = msg; }
@@ -68,17 +71,34 @@ async function runBacktestUI() {
             profile: p,
             ...Backtest.runBacktest(p, candlesByPair, candles1hByPair, startCap),
         }));
-        const elapsedMs = Math.round(performance.now() - t0);
+        const elapsedMain = Math.round(performance.now() - t0);
 
         const buyHold = Backtest.buyAndHold(candlesByPair, startCap);
         btLastResults = results;
         btLastBuyHold = buyHold;
 
-        renderKpiTable(results, buyHold, startCap);
-        renderEquityChart(results, buyHold);
+        // Wat-als: top 3 alternatieve RSI-drempels die NIET match maken met
+        // bestaande profielen. Base = gemiddeld (risk 2%/stop 3%) voor eerlijke
+        // vergelijking — alleen drempels variëren.
+        setBtStatus(`Scannen van alternatieve drempels...`);
+        await new Promise(r => setTimeout(r, 30));
+        const t1 = performance.now();
+        const baseForAlt = PROFILES.find(p => p.key === 'gemiddeld') || PROFILES[1];
+        const existing = PROFILES.map(p => ({ os: p.rsi_oversold, ob: p.rsi_overbought }));
+        const alternatives = Backtest.findTopAlternatives(
+            baseForAlt, candlesByPair, candles1hByPair, existing, 3, startCap
+        ).map((alt, i) => ({
+            ...alt,
+            profile: { ...alt.profile, color: BT_ALT_COLORS[i] },
+        }));
+        const elapsedAlt = Math.round(performance.now() - t1);
+        btLastAlternatives = alternatives;
+
+        renderKpiTable(results, alternatives, buyHold, startCap);
+        renderEquityChart(results, alternatives, buyHold);
         document.getElementById('bt-results').classList.remove('hidden');
 
-        setBtStatus(`✅ Klaar — ${days} dagen, ${totalCandles} candles, 4 profielen gesimuleerd in ${elapsedMs}ms`);
+        setBtStatus(`✅ Klaar — ${days} dagen, ${totalCandles} candles · 4 profielen (${elapsedMain}ms) + ${alternatives.length} alternatieven (${elapsedAlt}ms)`);
     } catch (e) {
         console.error(e);
         setBtStatus('⚠ ' + e.message);
@@ -87,37 +107,55 @@ async function runBacktestUI() {
     }
 }
 
-function renderKpiTable(results, buyHold, startCap) {
+function renderKpiTable(results, alternatives, buyHold, startCap) {
     const fmtEur = n => '€' + Number(n).toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const fmtPct = n => (n >= 0 ? '+' : '') + (n * 100).toFixed(2) + '%';
     const pnlClass = n => n >= 0 ? 'pnl-pos' : 'pnl-neg';
 
+    const COL_COUNT = 12;
     const headers = ['Profiel', 'Eindwaarde', 'Rendement', 'PnL', '# Trades', 'Win%', 'Profit factor', 'Max drawdown', 'Gem trade (min)', 'Max win', 'Max loss', 'Stop loss\'es'];
-    const rows = results.map(r => {
+
+    function rowFor(r, isAlt = false) {
         const s = r.stats;
+        const labelExtra = isAlt ? ` <span class="text-[10px] text-slate-500 ml-1 normal-case font-normal">(${r.profile.rsi_oversold}/${r.profile.rsi_overbought})</span>` : '';
         return [
-            { value: r.profile.label, raw: r.profile.label, color: r.profile.color },
-            { value: fmtEur(s.finalValue), raw: s.finalValue, cls: pnlClass(s.finalValue - startCap) },
-            { value: fmtPct(s.totalReturn), raw: s.totalReturn, cls: pnlClass(s.totalReturn), bold: true },
-            { value: fmtEur(s.totalPnl), raw: s.totalPnl, cls: pnlClass(s.totalPnl) },
-            { value: String(s.totalTrades), raw: s.totalTrades },
-            { value: s.totalTrades ? (s.winrate * 100).toFixed(0) + '%' : '—', raw: s.winrate },
-            { value: Number.isFinite(s.profitFactor) ? s.profitFactor.toFixed(2) : '∞', raw: s.profitFactor },
-            { value: (s.maxDrawdown * 100).toFixed(2) + '%', raw: s.maxDrawdown, cls: 'pnl-neg' },
-            { value: s.avgDurationMin ? s.avgDurationMin.toFixed(0) : '—', raw: s.avgDurationMin },
-            { value: fmtEur(s.maxWin), raw: s.maxWin, cls: 'pnl-pos' },
-            { value: fmtEur(s.maxLoss), raw: s.maxLoss, cls: 'pnl-neg' },
-            { value: String(s.stops), raw: s.stops },
+            { value: r.profile.label + labelExtra, color: r.profile.color, html: true },
+            { value: fmtEur(s.finalValue), cls: pnlClass(s.finalValue - startCap) },
+            { value: fmtPct(s.totalReturn), cls: pnlClass(s.totalReturn), bold: true },
+            { value: fmtEur(s.totalPnl), cls: pnlClass(s.totalPnl) },
+            { value: String(s.totalTrades) },
+            { value: s.totalTrades ? (s.winrate * 100).toFixed(0) + '%' : '—' },
+            { value: Number.isFinite(s.profitFactor) ? s.profitFactor.toFixed(2) : '∞' },
+            { value: (s.maxDrawdown * 100).toFixed(2) + '%', cls: 'pnl-neg' },
+            { value: s.avgDurationMin ? s.avgDurationMin.toFixed(0) : '—' },
+            { value: fmtEur(s.maxWin), cls: 'pnl-pos' },
+            { value: fmtEur(s.maxLoss), cls: 'pnl-neg' },
+            { value: String(s.stops) },
         ];
-    });
-    // Voeg buy-and-hold rij toe als benchmark
-    rows.push([
-        { value: 'Buy & Hold (benchmark)', color: BT_COLORS['buy-hold'] },
+    }
+
+    const mainRows = results.map(r => rowFor(r));
+    const altRows = (alternatives || []).map(r => rowFor(r, true));
+    const bhRow = [
+        { value: 'Buy & Hold', color: BT_COLORS['buy-hold'] },
         { value: fmtEur(buyHold.finalValue), cls: pnlClass(buyHold.finalValue - startCap) },
         { value: fmtPct(buyHold.totalReturn), cls: pnlClass(buyHold.totalReturn), bold: true },
         { value: fmtEur(buyHold.finalValue - startCap), cls: pnlClass(buyHold.finalValue - startCap) },
         { value: '—' }, { value: '—' }, { value: '—' }, { value: '—' }, { value: '—' }, { value: '—' }, { value: '—' }, { value: '—' },
-    ]);
+    ];
+
+    function renderRows(rows, isAlt = false) {
+        return rows.map(r => `
+            <tr class="border-b border-slate-800 hover:bg-slate-900/40 ${isAlt ? 'bg-fuchsia-500/[0.03]' : ''}">
+                ${r.map(c => `<td class="py-2 px-2 ${c.cls || ''} ${c.bold ? 'font-semibold' : ''}" ${c.color ? `style="color:${c.color}"` : ''}>${c.html ? c.value : escapeHtml(c.value)}</td>`).join('')}
+            </tr>
+        `).join('');
+    }
+
+    const sectionHeader = (label, hint) => `
+        <tr><td colspan="${COL_COUNT}" class="pt-4 pb-1 px-2 text-[10px] uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-700">
+            ${label} <span class="ml-2 text-slate-600 normal-case font-normal">${hint}</span>
+        </td></tr>`;
 
     const tbl = document.getElementById('bt-table');
     tbl.innerHTML = `
@@ -127,16 +165,23 @@ function renderKpiTable(results, buyHold, startCap) {
             </tr>
         </thead>
         <tbody>
-            ${rows.map(r => `
-                <tr class="border-b border-slate-800 hover:bg-slate-900/40">
-                    ${r.map((c, i) => `<td class="py-2 px-2 ${c.cls || ''} ${c.bold ? 'font-semibold' : ''}" ${c.color ? `style="color:${c.color}"` : ''}>${c.value}</td>`).join('')}
-                </tr>
-            `).join('')}
+            ${sectionHeader('Jouw 4 profielen', '')}
+            ${renderRows(mainRows)}
+            ${altRows.length ? sectionHeader('🔮 Wat als — top 3 alternatieve drempels', '(zelfde risk + stop als Gemiddeld, alleen RSI varieert)') : ''}
+            ${renderRows(altRows, true)}
+            ${sectionHeader('Benchmark', '(passief kopen, nooit verkopen)')}
+            <tr class="border-b border-slate-800">
+                ${bhRow.map(c => `<td class="py-2 px-2 ${c.cls || ''} ${c.bold ? 'font-semibold' : ''}" ${c.color ? `style="color:${c.color}"` : ''}>${escapeHtml(c.value)}</td>`).join('')}
+            </tr>
         </tbody>
     `;
 }
 
-function renderEquityChart(results, buyHold) {
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+}
+
+function renderEquityChart(results, alternatives, buyHold) {
     const datasets = results.map(r => ({
         label: r.profile.label,
         data: r.equity.map(e => ({ x: new Date(e.t), y: e.value })),
@@ -144,12 +189,23 @@ function renderEquityChart(results, buyHold) {
         backgroundColor: r.profile.color + '15',
         tension: 0.1, pointRadius: 0, borderWidth: 2,
     }));
+    // Wat-als alternatieven — gestippeld, dunner, fuchsia-tinten
+    for (const alt of (alternatives || [])) {
+        datasets.push({
+            label: `${alt.profile.label} (wat-als)`,
+            data: alt.equity.map(e => ({ x: new Date(e.t), y: e.value })),
+            borderColor: alt.profile.color,
+            backgroundColor: alt.profile.color + '0a',
+            borderDash: [6, 3],
+            tension: 0.1, pointRadius: 0, borderWidth: 1.5,
+        });
+    }
     datasets.push({
         label: 'Buy & Hold',
         data: buyHold.equity.map(e => ({ x: new Date(e.t), y: e.value })),
         borderColor: BT_COLORS['buy-hold'],
         backgroundColor: BT_COLORS['buy-hold'] + '15',
-        borderDash: [4, 4], tension: 0.1, pointRadius: 0, borderWidth: 2,
+        borderDash: [2, 2], tension: 0.1, pointRadius: 0, borderWidth: 1.5,
     });
 
     if (btEquityChart) {
@@ -283,6 +339,26 @@ function exportBacktestResults() {
         pnl_eur: round2(btLastBuyHold.finalValue - btLastResults[0].startCap),
     });
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'Summary');
+
+    // Sheet: alternatieven
+    if (btLastAlternatives && btLastAlternatives.length) {
+        const altRows = btLastAlternatives.map((r, i) => ({
+            rank: i + 1,
+            label: r.profile.label,
+            rsi_oversold: r.profile.rsi_oversold,
+            rsi_overbought: r.profile.rsi_overbought,
+            trend_filter: r.profile.trend_filter ?? 'geen',
+            risk_pct: r.profile.risk_per_trade,
+            stop_pct: r.profile.stop_loss_pct,
+            eindwaarde: round2(r.stats.finalValue),
+            rendement_pct: round4(r.stats.totalReturn),
+            trades: r.stats.totalTrades,
+            winrate_pct: round4(r.stats.winrate),
+            max_drawdown_pct: round4(r.stats.maxDrawdown),
+            profit_factor: Number.isFinite(r.stats.profitFactor) ? round2(r.stats.profitFactor) : '∞',
+        }));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(altRows), 'Wat-als alternatieven');
+    }
 
     // Sheet 2-5: trades per profiel
     for (const r of btLastResults) {
