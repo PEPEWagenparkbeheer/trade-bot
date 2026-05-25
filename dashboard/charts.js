@@ -389,16 +389,30 @@ function drawCompareChart(profiles) {
 }
 
 async function refreshCompareSignals() {
-    const { signals } = await api('/signals', { limit: 20 });
+    // Toon 200 zodat scrollen door geschiedenis mogelijk is; tellers staan in headers.
+    const { signals } = await api('/signals', { limit: 200 });
     const list = document.getElementById('compare-signals');
+    const counter = document.getElementById('compare-signals-count');
+    if (counter) counter.textContent = signals.length ? `${signals.length} getoond` : '';
     if (!signals.length) { list.innerHTML = '<div class="text-sm text-slate-500">nog geen signalen</div>'; return; }
     list.innerHTML = signals.map(s => signalRowHtml(s, true)).join('');
 }
 
 async function refreshCompareTrades() {
-    const { trades } = await api('/trades', { limit: 20 });
+    const { trades } = await api('/trades', { limit: 200 });
     const list = document.getElementById('compare-trades');
-    if (!trades.length) { list.innerHTML = '<div class="text-sm text-slate-500">nog geen trades</div>'; return; }
+    const counter = document.getElementById('compare-trades-count');
+    // Breakdown per profiel + outcome
+    if (counter) {
+        if (!trades.length) {
+            counter.textContent = '0 trades';
+        } else {
+            const wins = trades.filter(t => Number(t.pnl) > 0).length;
+            const losses = trades.filter(t => Number(t.pnl) < 0).length;
+            counter.textContent = `${trades.length} trades · ${wins} winst · ${losses} verlies`;
+        }
+    }
+    if (!trades.length) { list.innerHTML = '<div class="text-sm text-slate-500">nog geen afgesloten trades</div>'; return; }
     list.innerHTML = trades.map(t => tradeRowHtml(t, true)).join('');
 }
 
@@ -533,7 +547,7 @@ async function refreshDetailPositions() {
 }
 
 async function refreshDetailSignals() {
-    const { signals } = await api('/signals', { limit: 30, profile: currentProfileKey });
+    const { signals } = await api('/signals', { limit: 200, profile: currentProfileKey });
     const list = document.getElementById('signals-list');
     list.innerHTML = signals.length
         ? signals.map(s => signalRowHtml(s)).join('')
@@ -541,7 +555,7 @@ async function refreshDetailSignals() {
 }
 
 async function refreshDetailTrades() {
-    const { trades } = await api('/trades', { limit: 30, profile: currentProfileKey });
+    const { trades } = await api('/trades', { limit: 200, profile: currentProfileKey });
     const list = document.getElementById('trades-list');
     list.innerHTML = trades.length
         ? trades.map(t => tradeRowHtml(t)).join('')

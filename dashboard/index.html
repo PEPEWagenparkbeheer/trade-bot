@@ -85,18 +85,25 @@
     <!-- Trades samenvatting per profiel -->
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div class="panel">
-            <div class="flex items-center justify-between mb-3 gap-2">
-                <h2 class="panel-title">Laatste signalen — alle profielen</h2>
+            <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                <div class="flex items-baseline gap-2">
+                    <h2 class="panel-title">Signalen</h2>
+                    <span id="compare-signals-count" class="text-[10px] text-slate-500"></span>
+                </div>
                 <button data-export="signals" class="export-btn">⬇ Excel</button>
             </div>
-            <div id="compare-signals" class="space-y-2 max-h-[360px] overflow-y-auto pr-1"></div>
+            <div id="compare-signals" class="space-y-2 max-h-[420px] overflow-y-auto pr-1"></div>
         </div>
         <div class="panel">
             <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                <h2 class="panel-title">Afgesloten trades <span class="text-slate-500 text-xs ml-1">(open zie sectie boven)</span></h2>
+                <div class="flex items-baseline gap-2">
+                    <h2 class="panel-title">Afgesloten trades</h2>
+                    <span id="compare-trades-count" class="text-[10px] text-slate-500"></span>
+                </div>
                 <button data-export="trades" class="export-btn">⬇ Excel</button>
             </div>
-            <div id="compare-trades" class="space-y-2 max-h-[360px] overflow-y-auto pr-1"></div>
+            <div class="text-[10px] text-slate-500 -mt-1 mb-2">Open posities staan in de sectie boven met live floating PnL.</div>
+            <div id="compare-trades" class="space-y-2 max-h-[420px] overflow-y-auto pr-1"></div>
         </div>
     </section>
 </main>
