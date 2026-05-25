@@ -144,10 +144,11 @@ async function runBacktestUI() {
             setBtStatus(`Scannen van alternatieve drempels (${grid} grid, ${gridDesc})...`);
             await new Promise(r => setTimeout(r, 30));
             const t1 = performance.now();
-            const baseForAlt = PROFILES.find(p => p.key === 'gemiddeld') || PROFILES[1];
+            // Base voor wat-als = Extreem (geen 200MA filter, geen trend filter,
+            // hoogste risk/stop). Variëren alleen RSI-drempels om eerlijke
+            // vergelijking met bestaande 4 profielen mogelijk te maken.
+            const baseForAlt = PROFILES.find(p => p.key === 'extreem') || PROFILES[0];
             const existing = PROFILES.map(p => ({ os: p.rsi_oversold, ob: p.rsi_overbought }));
-            // Alternatieven gebruiken Gemiddeld als base (geen 200MA filter),
-            // dus marketContext is hier irrelevant — voor consistency wel doorgeven.
             alternatives = Backtest.findTopAlternatives(
                 baseForAlt, candlesByPair, candles1hByPair, existing, 3, startCap, grid
             ).map((alt, i) => ({

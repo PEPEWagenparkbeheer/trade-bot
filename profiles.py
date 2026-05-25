@@ -39,13 +39,6 @@ PROFILES: Dict[str, Profile] = {
         max_positions=1,
         risk_per_trade=0.01, stop_loss_pct=0.02,
     ),
-    "gemiddeld": Profile(
-        key="gemiddeld", label="Gemiddeld", color="#3b82f6",
-        rsi_oversold=30, rsi_overbought=70,
-        trend_filter=55,
-        max_positions=2,
-        risk_per_trade=0.02, stop_loss_pct=0.03,
-    ),
     "hoog": Profile(
         key="hoog", label="Hoog", color="#f59e0b",
         rsi_oversold=35, rsi_overbought=65,

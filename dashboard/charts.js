@@ -16,7 +16,7 @@ const LOCAL = window.BOT_CONFIG?.LOCAL ?? true;
 // Profielen worden uit /api/status geladen (single source of truth)
 let PROFILES = [];           // [{key,label,color,...}]
 let MARKET_REGIME = null;    // { is_bull, distance_pct, ma_200, btc_price } — voor 200MA badge
-let currentProfileKey = 'gemiddeld';
+let currentProfileKey = 'extreem';
 let activeTab = 'vergelijking';
 
 // Chart instances
@@ -55,11 +55,10 @@ async function remoteApi(path, params) {
             rsi_period: 14, paper_capital: 1000,
             market_regime,
             profiles: [
-                { key: 'laag',      label: 'Laag',      color: '#22c55e', rsi_oversold: 25, rsi_overbought: 75, trend_filter: 50,  max_positions: 1, risk_per_trade: 0.01, stop_loss_pct: 0.02, use_200ma_filter: false },
-                { key: 'gemiddeld', label: 'Gemiddeld', color: '#3b82f6', rsi_oversold: 30, rsi_overbought: 70, trend_filter: 55,  max_positions: 2, risk_per_trade: 0.02, stop_loss_pct: 0.03, use_200ma_filter: false },
-                { key: 'hoog',      label: 'Hoog',      color: '#f59e0b', rsi_oversold: 35, rsi_overbought: 65, trend_filter: 60,  max_positions: 3, risk_per_trade: 0.03, stop_loss_pct: 0.04, use_200ma_filter: false },
-                { key: 'extreem',   label: 'Extreem',   color: '#ef4444', rsi_oversold: 40, rsi_overbought: 60, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false },
-                { key: 'adaptief',  label: 'Adaptief',  color: '#a855f7', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: true  },
+                { key: 'laag',     label: 'Laag',     color: '#22c55e', rsi_oversold: 25, rsi_overbought: 75, trend_filter: 50,   max_positions: 1, risk_per_trade: 0.01, stop_loss_pct: 0.02, use_200ma_filter: false },
+                { key: 'hoog',     label: 'Hoog',     color: '#f59e0b', rsi_oversold: 35, rsi_overbought: 65, trend_filter: 60,   max_positions: 3, risk_per_trade: 0.03, stop_loss_pct: 0.04, use_200ma_filter: false },
+                { key: 'extreem',  label: 'Extreem',  color: '#ef4444', rsi_oversold: 40, rsi_overbought: 60, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false },
+                { key: 'adaptief', label: 'Adaptief', color: '#a855f7', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: true  },
             ],
         };
     }
