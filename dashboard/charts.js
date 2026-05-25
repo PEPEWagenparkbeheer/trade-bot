@@ -35,18 +35,22 @@ async function api(path, params = {}) {
 async function remoteApi(path, params) {
     if (path === '/status') {
         // Hardcoded fallback (matches profiles.py — moet sync blijven).
-        // Voor de 200MA marktregime: fetch direct daily BTC candles, bereken inline.
+        // Marktregime inline berekend uit Bitvavo daily candles.
         let market_regime = null;
         try {
             const r = await fetch('https://api.bitvavo.com/v2/BTC-EUR/candles?interval=1d&limit=200');
             const raw = await r.json();
             if (Array.isArray(raw) && raw.length >= 50) {
-                // Bitvavo: nieuwste eerst — oudest eerst is duidelijker
                 const closes = raw.slice().reverse().map(c => Number(c[4]));
                 const ma = closes.reduce((a, b) => a + b, 0) / closes.length;
                 const price = closes[closes.length - 1];
                 const distance = (price - ma) / ma;
-                market_regime = { btc_price: price, ma_200: ma, distance_pct: distance, is_bull: distance > 0.03, buffer_pct: 0.03 };
+                const regime = distance > 0.10 ? 'bull' : (distance < -0.10 ? 'bear' : 'neutral');
+                market_regime = {
+                    btc_price: price, ma_200: ma, distance_pct: distance,
+                    is_bull: distance > 0.03, buffer_pct: 0.03,
+                    regime, regime_pct: 0.10,
+                };
             }
         } catch (e) { /* niet kritisch */ }
         return {
@@ -55,10 +59,11 @@ async function remoteApi(path, params) {
             rsi_period: 14, paper_capital: 1000,
             market_regime,
             profiles: [
-                { key: 'laag',     label: 'Laag',     color: '#22c55e', rsi_oversold: 25, rsi_overbought: 75, trend_filter: 50,   max_positions: 1, risk_per_trade: 0.01, stop_loss_pct: 0.02, use_200ma_filter: false },
-                { key: 'hoog',     label: 'Hoog',     color: '#f59e0b', rsi_oversold: 35, rsi_overbought: 65, trend_filter: 60,   max_positions: 3, risk_per_trade: 0.03, stop_loss_pct: 0.04, use_200ma_filter: false },
-                { key: 'extreem',  label: 'Extreem',  color: '#ef4444', rsi_oversold: 40, rsi_overbought: 60, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false },
-                { key: 'adaptief', label: 'Adaptief', color: '#a855f7', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: true  },
+                { key: 'laag',      label: 'Laag',        color: '#22c55e', rsi_oversold: 25, rsi_overbought: 75, trend_filter: 50,   max_positions: 1, risk_per_trade: 0.01, stop_loss_pct: 0.02, use_200ma_filter: false, use_regime_filter: false, regime_bear: null, regime_neutral: null },
+                { key: 'hoog',      label: 'Hoog',        color: '#f59e0b', rsi_oversold: 35, rsi_overbought: 65, trend_filter: 60,   max_positions: 3, risk_per_trade: 0.03, stop_loss_pct: 0.04, use_200ma_filter: false, use_regime_filter: false, regime_bear: null, regime_neutral: null },
+                { key: 'extreem',   label: 'Extreem',     color: '#ef4444', rsi_oversold: 40, rsi_overbought: 60, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false, use_regime_filter: false, regime_bear: null, regime_neutral: null },
+                { key: 'adaptief',  label: 'Adaptief',    color: '#a855f7', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: true,  use_regime_filter: false, regime_bear: null, regime_neutral: null },
+                { key: 'adaptief2', label: 'Adaptief V2', color: '#ec4899', rsi_oversold: 20, rsi_overbought: 80, trend_filter: null, max_positions: 4, risk_per_trade: 0.05, stop_loss_pct: 0.05, use_200ma_filter: false, use_regime_filter: true,  regime_bear: [20, 80], regime_neutral: [25, 75] },
             ],
         };
     }
@@ -147,15 +152,32 @@ async function loadStatus() {
     document.getElementById('env-badge').textContent = r.env;
 }
 
-// 200MA badge HTML voor profielen met use_200ma_filter
+// Markt-regime badge HTML. Twee varianten:
+// - V1 (use_200ma_filter): 2 statussen (Gepauzeerd / Actief), 3% buffer
+// - V2 (use_regime_filter): 3 statussen (Bear / Neutraal / Bull), 10% drempels
 function marketRegimeBadge(profile) {
-    if (!profile.use_200ma_filter || !MARKET_REGIME || MARKET_REGIME.error) return '';
+    if (!MARKET_REGIME || MARKET_REGIME.error) return '';
     const r = MARKET_REGIME;
     const dist = (r.distance_pct * 100).toFixed(1);
-    if (r.is_bull) {
-        return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="BTC ${dist}% boven 200MA — Adaptief pauzeert nieuwe BUY's">⏸ Gepauzeerd</span>`;
+
+    if (profile.use_regime_filter) {
+        const regime = r.regime || 'neutral';
+        if (regime === 'bull') {
+            return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="BTC ${dist}% boven 200MA — V2 pauzeert">⏸ Bull — gepauzeerd</span>`;
+        }
+        if (regime === 'bear') {
+            return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-red-500/20 text-red-300 border border-red-500/30" title="BTC ${dist}% onder 200MA — V2 gebruikt Extreem drempels 20/80">🐻 Bear — Extreem 20/80</span>`;
+        }
+        return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/30" title="BTC binnen ±10% van 200MA — V2 gebruikt drempels 25/75">➡️ Neutraal — 25/75</span>`;
     }
-    return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" title="BTC ${dist}% t.o.v. 200MA — Adaptief handelt normaal">▶ Actief</span>`;
+
+    if (profile.use_200ma_filter) {
+        if (r.is_bull) {
+            return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30" title="BTC ${dist}% boven 200MA — Adaptief pauzeert nieuwe BUY's">⏸ Gepauzeerd</span>`;
+        }
+        return `<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" title="BTC ${dist}% t.o.v. 200MA — Adaptief handelt normaal">▶ Actief</span>`;
+    }
+    return '';
 }
 
 function setupTabs() {

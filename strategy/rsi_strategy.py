@@ -12,7 +12,8 @@ Per profiel komen drempels uit het Profile object:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Optional
 
 import config
 from data.fetcher import fetch_candles, to_dataframe
@@ -43,7 +44,32 @@ def compute_market_state(pair: str) -> MarketState:
     )
 
 
-def evaluate_from_state(state: MarketState, profile: Profile) -> Signal:
+def evaluate_from_state(state: MarketState, profile: Profile, regime: Optional[str] = None) -> Signal:
+    """
+    Genereer signaal. Voor V2 (use_regime_filter=True):
+    - regime="bull"   → HOLD (pauzeer, geen BUY)
+    - regime="bear"   → gebruik profile.regime_bear drempels
+    - regime="neutral"→ gebruik profile.regime_neutral drempels
+    Andere profielen negeren `regime` en gebruiken hun eigen drempels.
+    """
+    if profile.use_regime_filter and regime is not None:
+        if regime == "bull":
+            return Signal(
+                pair=state.pair, action=Action.HOLD,
+                price=state.price, rsi_15m=state.rsi_15m, rsi_1h=state.rsi_1h,
+                reason=f"[{profile.label}] BULL regime — gepauzeerd",
+            )
+        thresholds = profile.regime_bear if regime == "bear" else profile.regime_neutral
+        if thresholds is not None:
+            os, ob = thresholds
+            effective = replace(profile, rsi_oversold=os, rsi_overbought=ob)
+            action, reason = _decide(state.rsi_15m, state.rsi_1h, effective)
+            reason = f"[{profile.label}/{regime.upper()}] {reason.split('] ', 1)[-1]}"
+            return Signal(
+                pair=state.pair, action=action,
+                price=state.price, rsi_15m=state.rsi_15m, rsi_1h=state.rsi_1h, reason=reason,
+            )
+
     action, reason = _decide(state.rsi_15m, state.rsi_1h, profile)
     return Signal(
         pair=state.pair, action=action,

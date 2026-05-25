@@ -14,7 +14,7 @@ Belangrijke notes:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 
 @dataclass(frozen=True)
@@ -28,7 +28,14 @@ class Profile:
     max_positions: int
     risk_per_trade: float          # fractie portfolio dat per trade gerisced wordt
     stop_loss_pct: float           # fractie onder entry waar stop ligt
-    use_200ma_filter: bool = False # True = pauzeer BUY's als BTC > 200MA * 1.03
+    use_200ma_filter: bool = False # V1: True = pauzeer BUY's als BTC > 200MA * 1.03
+    # V2 regime filter — strategie wijzigt drempels per marktregime:
+    #   bear  (BTC <10% onder MA) → gebruik regime_bear drempels
+    #   neutral (binnen ±10%)     → gebruik regime_neutral drempels
+    #   bull  (>10% boven MA)     → pauzeer (geen BUY)
+    use_regime_filter: bool = False
+    regime_bear: Optional[Tuple[float, float]] = None     # (oversold, overbought)
+    regime_neutral: Optional[Tuple[float, float]] = None
 
 
 PROFILES: Dict[str, Profile] = {
@@ -64,6 +71,20 @@ PROFILES: Dict[str, Profile] = {
         max_positions=4,
         risk_per_trade=0.05, stop_loss_pct=0.05,
         use_200ma_filter=True,
+    ),
+    # Adaptief V2 = drie regimes ipv aan/uit.
+    # Bear (BTC <-10% MA): agressief kopen op echte oversold (20/80)
+    # Neutral (binnen ±10%): rustigere drempels (25/75)
+    # Bull (>+10% MA): pauzeer nieuwe entries, bestaande SELL/stop blijven werken
+    "adaptief2": Profile(
+        key="adaptief2", label="Adaptief V2", color="#ec4899",
+        rsi_oversold=20, rsi_overbought=80,   # default/fallback = bear drempels
+        trend_filter=None,
+        max_positions=4,
+        risk_per_trade=0.05, stop_loss_pct=0.05,
+        use_regime_filter=True,
+        regime_bear=(20, 80),
+        regime_neutral=(25, 75),
     ),
 }
 

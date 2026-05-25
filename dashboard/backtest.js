@@ -79,15 +79,15 @@ function rollingMA(values, window) {
     return out;
 }
 
-// Bouw market-context object dat door runBacktest gebruikt wordt voor bull-checks.
-// `btcDaily` = chronologisch gesorteerde daily candles van BTC/EUR.
-function buildMarketContext(btcDaily, buffer = 0.03) {
+// Bouw market-context object dat door runBacktest gebruikt wordt voor:
+// - V1 isBullAt(): bull-check met 3% buffer (Adaptief)
+// - V2 regimeAt(): "bear"/"neutral"/"bull" met ±10% drempels (Adaptief V2)
+function buildMarketContext(btcDaily, buffer = 0.03, regimeThreshold = 0.10) {
     const closes = btcDaily.map(c => c.close);
     const timestamps = btcDaily.map(c => c.timestamp);
     const ma200 = rollingMA(closes, 200);
     return {
-        timestamps, closes, ma200, buffer,
-        // Binary search: laatste daily index met ts <= t
+        timestamps, closes, ma200, buffer, regimeThreshold,
         indexAt(t) {
             let lo = 0, hi = this.timestamps.length - 1, ans = -1;
             while (lo <= hi) {
@@ -97,10 +97,21 @@ function buildMarketContext(btcDaily, buffer = 0.03) {
             }
             return ans;
         },
-        isBullAt(t) {
+        distanceAt(t) {
             const i = this.indexAt(t);
-            if (i < 0 || this.ma200[i] == null) return false;
-            return this.closes[i] > this.ma200[i] * (1 + this.buffer);
+            if (i < 0 || this.ma200[i] == null) return null;
+            return (this.closes[i] - this.ma200[i]) / this.ma200[i];
+        },
+        isBullAt(t) {
+            const d = this.distanceAt(t);
+            return d != null && d > this.buffer;
+        },
+        regimeAt(t) {
+            const d = this.distanceAt(t);
+            if (d == null) return null;
+            if (d > this.regimeThreshold)  return 'bull';
+            if (d < -this.regimeThreshold) return 'bear';
+            return 'neutral';
         },
     };
 }
@@ -199,10 +210,18 @@ class PaperPortfolio {
 // Strategie-decide (port van strategy.rsi_strategy._decide)
 // ============================================================================
 
-function decide(rsi15m, rsi1h, profile) {
+function decide(rsi15m, rsi1h, profile, regime = null) {
+    // V2 regime filter: pas RSI-drempels aan per marktregime, of pauzeer in bull
+    let os = profile.rsi_oversold;
+    let ob = profile.rsi_overbought;
+    if (profile.use_regime_filter && regime) {
+        if (regime === 'bull') return 'HOLD';
+        if (regime === 'bear' && profile.regime_bear) [os, ob] = profile.regime_bear;
+        if (regime === 'neutral' && profile.regime_neutral) [os, ob] = profile.regime_neutral;
+    }
     const trendOk = profile.trend_filter == null || rsi1h < profile.trend_filter;
-    if (rsi15m < profile.rsi_oversold && trendOk) return 'BUY';
-    if (rsi15m > profile.rsi_overbought) return 'SELL';
+    if (rsi15m < os && trendOk) return 'BUY';
+    if (rsi15m > ob) return 'SELL';
     return 'HOLD';
 }
 
@@ -281,10 +300,11 @@ function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000, m
             const r1h = rsi1hByPair[pair][h1i];
             if (r1h == null) continue;
 
-            const action = decide(r15, r1h, profile);
+            const regime = (profile.use_regime_filter && marketContext) ? marketContext.regimeAt(t) : null;
+            const action = decide(r15, r1h, profile, regime);
             const price = prices[pair];
             if (action === 'BUY') {
-                // 200MA marktfilter: pauzeer BUY's tijdens bull market
+                // V1 200MA marktfilter: pauzeer BUY's tijdens bull market (alleen Adaptief V1)
                 if (profile.use_200ma_filter && marketContext && marketContext.isBullAt(t)) {
                     pausedBuys++;
                     continue;
@@ -293,6 +313,7 @@ function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000, m
             } else if (action === 'SELL') {
                 if (pp.close(pair, price, t, 'sell-signal')) sells++;
             }
+            // V2 telt 'HOLD-bij-bull' al impliciet via decide() → niet apart loggen
         }
 
         pp.recordEquity(t, prices);

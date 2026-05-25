@@ -57,18 +57,20 @@
                 <option value="hoog">Hoog</option>
                 <option value="extreem">Extreem</option>
                 <option value="adaptief">Adaptief</option>
+                <option value="adaptief2">Adaptief V2</option>
             </select>
             <button id="export-xlsx" class="export-btn-primary">⬇ Volledig Excel rapport</button>
             <span id="export-status" class="text-xs text-slate-500"></span>
         </div>
     </section>
 
-    <!-- 4 profile cards: altijd minimaal 2 naast elkaar (ook op smal mobiel) -->
-    <section class="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-3">
-        <div data-profile-card="laag"     class="profile-card"></div>
-        <div data-profile-card="hoog"     class="profile-card"></div>
-        <div data-profile-card="extreem"  class="profile-card"></div>
-        <div data-profile-card="adaptief" class="profile-card"></div>
+    <!-- 5 profile cards: altijd minimaal 2 naast elkaar (ook op smal mobiel) -->
+    <section class="grid grid-cols-2 lg:grid-cols-5 gap-2 sm:gap-3">
+        <div data-profile-card="laag"      class="profile-card"></div>
+        <div data-profile-card="hoog"      class="profile-card"></div>
+        <div data-profile-card="extreem"   class="profile-card"></div>
+        <div data-profile-card="adaptief"  class="profile-card"></div>
+        <div data-profile-card="adaptief2" class="profile-card"></div>
     </section>
 
     <!-- Open posities (alle profielen) -->
@@ -285,6 +287,7 @@
                         <option value="hoog">basis = Hoog</option>
                         <option value="extreem" selected>basis = Extreem</option>
                         <option value="adaptief">basis = Adaptief</option>
+                        <option value="adaptief2">basis = Adaptief V2</option>
                     </select>
                     <button id="bt-optimize" class="export-btn">Scan drempels</button>
                 </div>

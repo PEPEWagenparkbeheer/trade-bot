@@ -14,11 +14,13 @@ def get_status():
     try:
         r = market_regime()
         regime = {
-            "btc_price":     r.btc_price,
-            "ma_200":        r.ma_200,
-            "distance_pct":  r.distance_pct,
-            "is_bull":       r.is_bull,
-            "buffer_pct":    0.03,
+            "btc_price":      r.btc_price,
+            "ma_200":         r.ma_200,
+            "distance_pct":   r.distance_pct,
+            "is_bull":        r.is_bull,           # V1 (3% buffer)
+            "buffer_pct":     0.03,
+            "regime":         r.regime,            # V2: bear|neutral|bull (10% drempels)
+            "regime_pct":     0.10,
         }
     except Exception as e:
         regime = {"error": str(e)}
@@ -39,6 +41,9 @@ def get_status():
                 "trend_filter": p.trend_filter, "max_positions": p.max_positions,
                 "risk_per_trade": p.risk_per_trade, "stop_loss_pct": p.stop_loss_pct,
                 "use_200ma_filter": p.use_200ma_filter,
+                "use_regime_filter": p.use_regime_filter,
+                "regime_bear": list(p.regime_bear) if p.regime_bear else None,
+                "regime_neutral": list(p.regime_neutral) if p.regime_neutral else None,
             } for p in all_profiles()
         ],
     }

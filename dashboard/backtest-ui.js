@@ -106,11 +106,11 @@ async function runBacktestUI() {
             setBtStatus(`${pair}: ${c15m.length.toLocaleString()} × 15m + ${c1h.length.toLocaleString()} × 1h geladen`);
         }
 
-        // 200MA market context — alleen nodig als een profiel use_200ma_filter heeft.
+        // 200MA market context — nodig voor V1 (use_200ma_filter) én V2 (use_regime_filter).
         // Fetch BTC daily candles vanaf 200 dagen vóór de backtest-start, zodat de
         // rolling 200MA al geldig is bij de eerste backtest-tick.
         let marketContext = null;
-        const needsMa = PROFILES.some(p => p.use_200ma_filter);
+        const needsMa = PROFILES.some(p => p.use_200ma_filter || p.use_regime_filter);
         if (needsMa) {
             setBtStatus('Daily BTC candles ophalen voor 200MA filter...');
             const maSinceMs = period.sinceMs - 200 * 86400_000;

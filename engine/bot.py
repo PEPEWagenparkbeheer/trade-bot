@@ -20,6 +20,7 @@ from typing import Dict, List
 
 import config
 from api import db
+from data.market_filter import get_market_regime
 from engine.logger import get_logger
 from engine.order_executor import OrderExecutor
 from portfolio.manager import PortfolioManager, PAPER_CAPITAL_DEFAULT
@@ -74,6 +75,15 @@ def run_tick(profiles: List[Profile]) -> None:
         log.error("Geen marktdata beschikbaar — tick overgeslagen")
         return
 
+    # Eén regime-lookup per tick (cached 1u), gedeeld door alle V2 profielen
+    regime = None
+    if any(p.use_regime_filter for p in profiles):
+        try:
+            regime = get_market_regime()
+            log.info(f"MARKET regime (V2): {regime.upper()}")
+        except Exception as e:
+            log.error(f"Regime fetch faalde: {e}")
+
     for pair, state in market.items():
         log.info(f"MARKET {pair}  price={state.price:.2f}  rsi15m={state.rsi_15m:.1f}  rsi1h={state.rsi_1h:.1f}")
 
@@ -85,7 +95,7 @@ def run_tick(profiles: List[Profile]) -> None:
 
         for pair, state in market.items():
             prices[pair] = state.price
-            signal = evaluate_from_state(state, profile)
+            signal = evaluate_from_state(state, profile, regime=regime)
             result = executor.handle_tick(signal, state.price)
 
             log.info(f"  [{profile.label}] {pair} -> {result.action_taken}  ({result.detail})")
