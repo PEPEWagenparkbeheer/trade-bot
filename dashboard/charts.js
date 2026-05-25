@@ -117,6 +117,7 @@ async function init() {
     setupTabs();
     setupProfileSelector();
     setupChartControls();
+    setupCardNavigation();
     await refreshAll();
     setInterval(refreshAll, REFRESH_MS);
 }
@@ -246,7 +247,11 @@ async function refreshCompareTab() {
     const { profiles } = await api('/portfolios');
     drawCompareCards(profiles);
     drawCompareChart(profiles);
-    await Promise.all([refreshCompareSignals(), refreshCompareTrades()]);
+    await Promise.all([
+        refreshCompareOpenPositions(),
+        refreshCompareSignals(),
+        refreshCompareTrades(),
+    ]);
 }
 
 function drawCompareCards(profiles) {
@@ -255,9 +260,16 @@ function drawCompareCards(profiles) {
         if (!card) return;
         const total = p.latest ? Number(p.latest.total_value) : PAPER_START;
         const realised = Number(p.latest?.realised_pnl ?? 0);
+        // Floating = total - paper_start - realised   (zie comment hieronder)
+        // → splitst het verschil tussen "Total value" en €1000 in realised (gesloten trades)
+        //   en floating (mark-to-market van nog open posities). Anders denkt Joep dat PnL
+        //   niet klopt omdat realised << (total - 1000).
+        const floating = total - PAPER_START - realised;
         const change = (total - PAPER_START) / PAPER_START;
         const tf = p.trend_filter === null ? 'geen' : `<${p.trend_filter}`;
         card.style.borderTopColor = p.color;
+        card.style.cursor = 'pointer';
+        card.title = 'Klik voor detail-overzicht';
         card.innerHTML = `
             <div class="flex items-center justify-between mb-1.5 sm:mb-2 gap-1">
                 <div class="font-semibold text-sm sm:text-lg truncate" style="color:${p.color}">${p.label}</div>
@@ -266,9 +278,9 @@ function drawCompareCards(profiles) {
             <div class="text-base sm:text-2xl font-semibold ${pnlClass(change)} leading-tight">${fmtEur(total)}</div>
             <div class="text-[10px] sm:text-xs ${pnlClass(change)} mb-2 sm:mb-3">${fmtPct(change)}</div>
             <div class="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] sm:text-xs">
-                <div><div class="text-slate-500">PnL</div><div class="${pnlClass(realised)} font-medium">${fmtPnL(realised)}</div></div>
-                <div><div class="text-slate-500">Trades</div><div class="text-slate-200 font-medium">${p.trades}</div></div>
-                <div><div class="text-slate-500">Winrate</div><div class="text-slate-200 font-medium">${p.trades ? (p.winrate * 100).toFixed(0) + '%' : '—'}</div></div>
+                <div><div class="text-slate-500">Realised</div><div class="${pnlClass(realised)} font-medium">${fmtPnL(realised)}</div></div>
+                <div><div class="text-slate-500">Floating</div><div class="${pnlClass(floating)} font-medium">${fmtPnL(floating)}</div></div>
+                <div><div class="text-slate-500">Trades</div><div class="text-slate-200 font-medium">${p.trades}${p.trades ? ` · ${(p.winrate * 100).toFixed(0)}%` : ''}</div></div>
                 <div><div class="text-slate-500">Open</div><div class="text-slate-200 font-medium">${p.latest?.open_positions ?? 0}/${p.max_positions}</div></div>
             </div>
             <div class="hidden sm:block mt-3 pt-3 border-t border-slate-800 text-[10px] text-slate-500">
@@ -276,6 +288,65 @@ function drawCompareCards(profiles) {
             </div>
         `;
     });
+}
+
+// Click-handler op profile cards → switch naar Detail tab voor dat profiel.
+// Geregistreerd één keer in setupTabs(), niet binnen renderloop.
+function setupCardNavigation() {
+    document.querySelectorAll('[data-profile-card]').forEach(card => {
+        card.addEventListener('click', () => {
+            const key = card.dataset.profileCard;
+            currentProfileKey = key;
+            // Update Detail-tab selector
+            const sel = document.getElementById('profile-select');
+            if (sel) sel.value = key;
+            updateProfileParams();
+            // Switch tab
+            activeTab = 'detail';
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('tab-active', b.dataset.tab === 'detail'));
+            document.querySelectorAll('.tab-pane').forEach(pane => pane.classList.toggle('hidden', pane.id !== 'tab-detail'));
+            refreshAll();
+            // Scroll naar boven
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    });
+}
+
+// --- Open posities sectie in Vergelijking tab ---
+async function refreshCompareOpenPositions() {
+    const { positions } = await api('/positions');
+    const section = document.getElementById('compare-open-section');
+    const list = document.getElementById('compare-open-list');
+    const count = document.getElementById('compare-open-count');
+    if (!positions || !positions.length) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+    count.textContent = `(${positions.length})`;
+    list.innerHTML = positions.map(p => {
+        const pnl = Number(p.unrealised_pnl);
+        const pnlPct = Number(p.unrealised_pnl_pct);
+        const opened = new Date(p.opened_at).toLocaleString('nl-NL', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+        const stopDist = (Number(p.current_price) - Number(p.stop_loss_price)) / Number(p.current_price);
+        return `
+        <div class="signal-row">
+            <div class="flex items-center justify-between gap-2 mb-1.5">
+                <div class="flex items-center gap-2 min-w-0">
+                    ${profileBadge(p.profile)}
+                    <span class="font-semibold">${p.pair}</span>
+                </div>
+                <div class="${pnlClass(pnl)} font-semibold text-sm">${fmtPnL(pnl)} <span class="text-[10px]">(${fmtPct(pnlPct)})</span></div>
+            </div>
+            <div class="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10px] text-slate-400">
+                <div>Entry: <span class="text-slate-200">${fmtEur(p.entry_price)}</span></div>
+                <div>Nu: <span class="text-slate-200">${fmtEur(p.current_price)}</span></div>
+                <div>Size: <span class="text-slate-200">${Number(p.size).toFixed(6)}</span></div>
+                <div>Stop: <span class="text-slate-200">${fmtEur(p.stop_loss_price)}</span> <span class="text-slate-600">(${(stopDist*100).toFixed(1)}%)</span></div>
+            </div>
+            <div class="text-[9px] text-slate-600 mt-1">geopend ${opened}</div>
+        </div>`;
+    }).join('');
 }
 
 function drawCompareChart(profiles) {

@@ -70,6 +70,12 @@
         <div data-profile-card="extreem"   class="profile-card"></div>
     </section>
 
+    <!-- Open posities (alle profielen) -->
+    <section id="compare-open-section" class="panel hidden">
+        <h2 class="panel-title mb-3">Open posities — alle profielen <span id="compare-open-count" class="text-slate-500 ml-1"></span></h2>
+        <div id="compare-open-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3"></div>
+    </section>
+
     <!-- Combined portfolio chart -->
     <section class="panel">
         <h2 class="panel-title mb-3">Portfolio waarde — alle profielen</h2>
@@ -86,8 +92,8 @@
             <div id="compare-signals" class="space-y-2 max-h-[360px] overflow-y-auto pr-1"></div>
         </div>
         <div class="panel">
-            <div class="flex items-center justify-between mb-3 gap-2">
-                <h2 class="panel-title">Laatste trades — alle profielen</h2>
+            <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                <h2 class="panel-title">Afgesloten trades <span class="text-slate-500 text-xs ml-1">(open zie sectie boven)</span></h2>
                 <button data-export="trades" class="export-btn">⬇ Excel</button>
             </div>
             <div id="compare-trades" class="space-y-2 max-h-[360px] overflow-y-auto pr-1"></div>
