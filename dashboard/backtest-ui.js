@@ -27,45 +27,90 @@ function setupBacktestUI() {
     document.getElementById('bt-run').addEventListener('click', runBacktestUI);
     document.getElementById('bt-optimize').addEventListener('click', runOptimizerUI);
     document.getElementById('bt-export').addEventListener('click', exportBacktestResults);
+
+    // Toggle custom date range bij periode=custom
+    const periodSel = document.getElementById('bt-period');
+    const customBox = document.getElementById('bt-custom-dates');
+    const dateFrom = document.getElementById('bt-date-from');
+    const dateTo = document.getElementById('bt-date-to');
+    periodSel.addEventListener('change', () => {
+        const isCustom = periodSel.value === 'custom';
+        customBox.classList.toggle('hidden', !isCustom);
+        if (isCustom && !dateFrom.value) {
+            // Default: laatste 30 dagen, eindigend vandaag
+            const today = new Date();
+            const past = new Date(Date.now() - 30 * 86400_000);
+            dateFrom.value = past.toISOString().slice(0, 10);
+            dateTo.value = today.toISOString().slice(0, 10);
+        }
+    });
 }
 
 // ============================================================================
 // Run backtest voor alle 4 profielen
 // ============================================================================
+function resolvePeriod() {
+    // Returnt { sinceMs, untilMs, label }
+    const sel = document.getElementById('bt-period').value;
+    if (sel === 'custom') {
+        const from = document.getElementById('bt-date-from').value;
+        const to = document.getElementById('bt-date-to').value;
+        if (!from || !to) throw new Error('Vul beide datums in voor Custom-periode');
+        const sinceMs = new Date(from + 'T00:00:00Z').getTime();
+        const untilMs = new Date(to + 'T23:59:59Z').getTime();
+        if (sinceMs >= untilMs) throw new Error('"Vanaf" moet vóór "Tot en met" liggen');
+        const days = Math.round((untilMs - sinceMs) / 86400_000);
+        return { sinceMs, untilMs, label: `${from} → ${to} (${days}d)`, days };
+    }
+    const days = Number(sel);
+    return {
+        sinceMs: Date.now() - days * 86400_000,
+        untilMs: Date.now(),
+        label: `${days} dagen`,
+        days,
+    };
+}
+
+function gridSizeForDays(days) {
+    if (days <= 60) return 'fine';     // ~50 combos
+    if (days <= 365) return 'medium';  // ~30 combos
+    return 'coarse';                   // ~9 combos
+}
+
 async function runBacktestUI() {
     const btn = document.getElementById('bt-run');
     btn.disabled = true;
-    setBtStatus('Historische candles ophalen...');
+    setBtStatus('Periode bepalen...');
 
     try {
-        const days = Number(document.getElementById('bt-period').value);
+        const period = resolvePeriod();
         const pairsChoice = document.getElementById('bt-pairs').value;
         const startCap = Number(document.getElementById('bt-capital').value);
+        const includeAlt = document.getElementById('bt-include-altsearch').checked;
         const pairs = pairsChoice === 'both' ? ['BTC/EUR', 'ETH/EUR'] : [pairsChoice];
 
-        const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
-        const untilMs = Date.now();
+        // Progress callback voor lange fetches
+        const onProgress = ({ pair, tf, loaded, oldestIso, chunks }) => {
+            setBtStatus(`Candles ${pair} ${tf}: ${loaded.toLocaleString()} candles geladen (${chunks} chunks, terug tot ${oldestIso})...`);
+        };
 
-        // Fetch alle pairs in parallel, 15m én 1h
         const candlesByPair = {};
         const candles1hByPair = {};
         for (const pair of pairs) {
-            setBtStatus(`Candles ophalen voor ${pair}...`);
-            const [c15m, c1h] = await Promise.all([
-                Backtest.fetchHistoricalCandles(pair, '15m', sinceMs, untilMs),
-                Backtest.fetchHistoricalCandles(pair, '1h', sinceMs, untilMs),
-            ]);
+            setBtStatus(`Candles ophalen voor ${pair} (15m)...`);
+            const c15m = await Backtest.fetchHistoricalCandles(pair, '15m', period.sinceMs, period.untilMs, onProgress);
+            setBtStatus(`Candles ophalen voor ${pair} (1h)...`);
+            const c1h  = await Backtest.fetchHistoricalCandles(pair, '1h',  period.sinceMs, period.untilMs, onProgress);
             candlesByPair[pair] = c15m;
             candles1hByPair[pair] = c1h;
-            setBtStatus(`${pair}: ${c15m.length} × 15m + ${c1h.length} × 1h candles geladen`);
+            setBtStatus(`${pair}: ${c15m.length.toLocaleString()} × 15m + ${c1h.length.toLocaleString()} × 1h geladen`);
         }
         btLastCandles = { candlesByPair, candles1hByPair };
 
         const totalCandles = Object.values(candlesByPair).reduce((s, c) => s + c.length, 0);
-        setBtStatus(`Simuleren van ${totalCandles} candles voor 4 profielen...`);
-        await new Promise(r => setTimeout(r, 50));   // laat UI updaten
+        setBtStatus(`Simuleren van ${totalCandles.toLocaleString()} candles voor 4 profielen...`);
+        await new Promise(r => setTimeout(r, 50));
 
-        // Run alle 4 profielen
         const t0 = performance.now();
         const results = PROFILES.map(p => ({
             profile: p,
@@ -77,28 +122,33 @@ async function runBacktestUI() {
         btLastResults = results;
         btLastBuyHold = buyHold;
 
-        // Wat-als: top 3 alternatieve RSI-drempels die NIET match maken met
-        // bestaande profielen. Base = gemiddeld (risk 2%/stop 3%) voor eerlijke
-        // vergelijking — alleen drempels variëren.
-        setBtStatus(`Scannen van alternatieve drempels...`);
-        await new Promise(r => setTimeout(r, 30));
-        const t1 = performance.now();
-        const baseForAlt = PROFILES.find(p => p.key === 'gemiddeld') || PROFILES[1];
-        const existing = PROFILES.map(p => ({ os: p.rsi_oversold, ob: p.rsi_overbought }));
-        const alternatives = Backtest.findTopAlternatives(
-            baseForAlt, candlesByPair, candles1hByPair, existing, 3, startCap
-        ).map((alt, i) => ({
-            ...alt,
-            profile: { ...alt.profile, color: BT_ALT_COLORS[i] },
-        }));
-        const elapsedAlt = Math.round(performance.now() - t1);
+        // Wat-als — adaptief grid om lange backtests werkbaar te houden
+        let alternatives = [];
+        let elapsedAlt = 0;
+        if (includeAlt) {
+            const grid = gridSizeForDays(period.days);
+            const gridDesc = { fine: '~50 combinaties', medium: '~30', coarse: '~9' }[grid];
+            setBtStatus(`Scannen van alternatieve drempels (${grid} grid, ${gridDesc})...`);
+            await new Promise(r => setTimeout(r, 30));
+            const t1 = performance.now();
+            const baseForAlt = PROFILES.find(p => p.key === 'gemiddeld') || PROFILES[1];
+            const existing = PROFILES.map(p => ({ os: p.rsi_oversold, ob: p.rsi_overbought }));
+            alternatives = Backtest.findTopAlternatives(
+                baseForAlt, candlesByPair, candles1hByPair, existing, 3, startCap, grid
+            ).map((alt, i) => ({
+                ...alt,
+                profile: { ...alt.profile, color: BT_ALT_COLORS[i] },
+            }));
+            elapsedAlt = Math.round(performance.now() - t1);
+        }
         btLastAlternatives = alternatives;
 
         renderKpiTable(results, alternatives, buyHold, startCap);
         renderEquityChart(results, alternatives, buyHold);
         document.getElementById('bt-results').classList.remove('hidden');
 
-        setBtStatus(`✅ Klaar — ${days} dagen, ${totalCandles} candles · 4 profielen (${elapsedMain}ms) + ${alternatives.length} alternatieven (${elapsedAlt}ms)`);
+        const altMsg = includeAlt ? ` + ${alternatives.length} alternatieven (${elapsedAlt}ms)` : ' (wat-als uit)';
+        setBtStatus(`✅ Klaar — ${period.label}, ${totalCandles.toLocaleString()} candles · 4 profielen (${elapsedMain}ms)${altMsg}`);
     } catch (e) {
         console.error(e);
         setBtStatus('⚠ ' + e.message);

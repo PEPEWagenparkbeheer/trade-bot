@@ -12,8 +12,10 @@ const TF_MS = {
     '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000,
 };
 
-async function fetchHistoricalCandles(pair, timeframe, sinceMs, untilMs) {
+async function fetchHistoricalCandles(pair, timeframe, sinceMs, untilMs, progressCb = null) {
     // Bitvavo levert max 1440 candles per call. Voor langere periodes paginated.
+    // Safety = 300 → genoeg voor ~12 jaar op 15m of veel meer op grovere TF's.
+    // Progress callback (optional): wordt aangeroepen per chunk met { pair, tf, loaded, oldestIso }.
     const market = pair.replace('/', '-');
     const tfMs = TF_MS[timeframe];
     if (!tfMs) throw new Error('Onbekend timeframe: ' + timeframe);
@@ -21,8 +23,9 @@ async function fetchHistoricalCandles(pair, timeframe, sinceMs, untilMs) {
     const allCandles = [];
     let cursorEnd = untilMs;
     let safety = 0;
+    const MAX_CHUNKS = 300;
 
-    while (cursorEnd > sinceMs && safety < 50) {
+    while (cursorEnd > sinceMs && safety < MAX_CHUNKS) {
         safety++;
         const url = `https://api.bitvavo.com/v2/${market}/candles?interval=${timeframe}&limit=1440&end=${cursorEnd}`;
         const r = await fetch(url);
@@ -43,6 +46,11 @@ async function fetchHistoricalCandles(pair, timeframe, sinceMs, untilMs) {
         // Sorteer chronologisch + prepend (we werken backward in tijd)
         chunk.sort((a, b) => a.timestamp - b.timestamp);
         allCandles.unshift(...chunk);
+
+        if (progressCb) {
+            const oldestIso = chunk[0] ? new Date(chunk[0].timestamp).toISOString().slice(0, 10) : '';
+            progressCb({ pair, tf: timeframe, loaded: allCandles.length, oldestIso, chunks: safety });
+        }
 
         const oldestInChunk = chunk[0]?.timestamp ?? cursorEnd;
         if (oldestInChunk <= sinceMs || chunk.length < 1440) break;
@@ -359,12 +367,24 @@ function optimizeThresholds(baseProfile, candlesByPair, candles1hByPair, grid) {
 // Top-N alternatieve drempels — grid scan, exclude bestaande profielen
 // ============================================================================
 
-function findTopAlternatives(base, candlesByPair, candles1hByPair, excludeCombos, topN = 3, startCap = 1000) {
-    // Fijnmaziger grid (10 × 11 = ~50 combinaties na ob>os filter)
-    const grid = {
-        oversold:   [20, 23, 25, 27, 30, 33, 35, 37, 40, 43],
-        overbought: [55, 57, 60, 63, 65, 67, 70, 73, 75, 78, 80],
+function findTopAlternatives(base, candlesByPair, candles1hByPair, excludeCombos, topN = 3, startCap = 1000, gridSize = 'medium') {
+    // Grid adapteert aan dataset-grootte: bij langere periodes minder combinaties
+    // omdat elke variant een hele backtest doet (~50ms per 1k candles).
+    const grids = {
+        fine: {
+            oversold:   [20, 23, 25, 27, 30, 33, 35, 37, 40, 43],
+            overbought: [55, 57, 60, 63, 65, 67, 70, 73, 75, 78, 80],
+        },
+        medium: {
+            oversold:   [20, 25, 30, 35, 40, 45],
+            overbought: [55, 60, 65, 70, 75, 80],
+        },
+        coarse: {
+            oversold:   [22, 30, 38],
+            overbought: [62, 70, 78],
+        },
     };
+    const grid = grids[gridSize] || grids.medium;
     const excludeSet = new Set(excludeCombos.map(c => `${c.os}-${c.ob}`));
 
     const all = [];
