@@ -113,6 +113,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="één tick en exit (debug/cron)")
     parser.add_argument("--interval", type=int, default=60, help="seconden tussen ticks")
+    parser.add_argument("--max-ticks", type=int, default=0,
+                        help="exit na N ticks (0 = oneindig). Voor GH Actions cron: 5 ticks van 60s = ~4 min")
     parser.add_argument("--profile", help="alleen 1 profile evalueren (debug)")
     args = parser.parse_args()
 
@@ -123,10 +125,13 @@ def main() -> None:
         f"interval={args.interval}s  profiles={[p.key for p in profiles]}"
     )
 
+    ticks_done = 0
     try:
         while True:
             run_tick(profiles)
-            if args.once:
+            ticks_done += 1
+            if args.once or (args.max_ticks and ticks_done >= args.max_ticks):
+                log.info(f"BOT STOP — {ticks_done} tick(s) gedaan")
                 break
             time.sleep(args.interval)
     except KeyboardInterrupt:
