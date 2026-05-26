@@ -332,22 +332,27 @@ function runBacktest(profile, candlesByPair, candles1hByPair, startCap = 1000, m
             const regimeV3 = (profile.use_slope_filter  && marketContext) ? marketContext.regimeV3At(t) : null;
             const action = decide(r15, r1h, profile, regime, regimeV3);
 
-            // Diagnostiek: tel regime-distributie + heuristische 'paused-by-regime' counter.
-            // Heuristic: BTC RSI 15m < default oversold drempel (zonder filter) tijdens
-            // bull/above-far. Geeft ruwe indicatie hoe vaak filter daadwerkelijk BUYs blokkeerde.
-            const regimeKey = regimeV3 || regime;
-            if (regimeKey) {
-                regimeDist[regimeKey] = (regimeDist[regimeKey] || 0) + 1;
-                regimeTotalTicks++;
-                const isPaused = regimeKey === 'bull' || regimeKey === 'above-far';
-                if (isPaused) {
-                    // Welke drempel zou normaal gelden? Voor V2: regime_bear ?? rsi_oversold
-                    // Voor V3: regime_bear_falling ?? rsi_oversold
-                    const fallbackOs = profile.regime_bear?.[0]
-                        ?? profile.regime_bear_falling?.[0]
-                        ?? profile.rsi_oversold;
-                    const trendOk = profile.trend_filter == null || r1h < profile.trend_filter;
-                    if (r15 < fallbackOs && trendOk) pausedByRegime++;
+            // Diagnostiek: tel regime-distributie voor élk filter-aware profiel.
+            // V1 (200MA aan/uit) en V2 (3-state) gebruiken de bear/neutral/bull labels.
+            // V3 gebruikt z'n eigen 4-state labels (bear-falling/bear-rising/above-close/above-far).
+            // Bij geen filter: niets tracken (niet relevant).
+            const wantDiagnose = profile.use_200ma_filter || profile.use_regime_filter || profile.use_slope_filter;
+            if (wantDiagnose && marketContext) {
+                const distributionKey = profile.use_slope_filter
+                    ? marketContext.regimeV3At(t)
+                    : marketContext.regimeAt(t);
+                if (distributionKey) {
+                    regimeDist[distributionKey] = (regimeDist[distributionKey] || 0) + 1;
+                    regimeTotalTicks++;
+                    const isPaused = distributionKey === 'bull' || distributionKey === 'above-far';
+                    if (isPaused) {
+                        // Heuristic: zou er een BUY zijn geweest zonder pauze-filter?
+                        const fallbackOs = profile.regime_bear?.[0]
+                            ?? profile.regime_bear_falling?.[0]
+                            ?? profile.rsi_oversold;
+                        const trendOk = profile.trend_filter == null || r1h < profile.trend_filter;
+                        if (r15 < fallbackOs && trendOk) pausedByRegime++;
+                    }
                 }
             }
             const price = prices[pair];
